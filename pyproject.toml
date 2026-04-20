@@ -1,0 +1,14 @@
+[project]
+name = "laolotto"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "apscheduler>=3.11.2",
+    "bs4>=0.0.2",
+    "fastapi[standard]>=0.136.0",
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.2",
+    "requests>=2.33.1",
+]
