@@ -1,6 +1,6 @@
 services:
-  app:
-    build: .
+  lotto:
+    image: thititongumpun/lao_lotto:latest
     ports:
       - "8000:8000"
     environment:
@@ -9,6 +9,3 @@ services:
     env_file:
       - .env
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy

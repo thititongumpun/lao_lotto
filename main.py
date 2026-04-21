@@ -20,8 +20,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 load_dotenv()
 
@@ -279,17 +280,27 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Lao Lottery Fetcher", lifespan=lifespan)
+security = HTTPBasic()
+
+
+def require_auth(credentials: HTTPBasicCredentials = Depends(security)):
+    if credentials.username != "admin" or credentials.password != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
 
 
 @app.get("/health")
-def health():
+def health(_: None = Depends(require_auth)):
     job = scheduler.get_job("midnight_fetch")
     next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
     return {"status": "ok", "next_run": next_run}
 
 
 @app.post("/run")
-def trigger_run(backfill: bool = False):
+def trigger_run(backfill: bool = False, _: None = Depends(require_auth)):
     """Manually trigger a fetch. Pass ?backfill=true to also import archive."""
     result = run_fetch_job(backfill=backfill)
     if result["status"] == "error":
@@ -298,7 +309,7 @@ def trigger_run(backfill: bool = False):
 
 
 @app.get("/results")
-def get_results(limit: int = 20):
+def get_results(limit: int = 20, _: None = Depends(require_auth)):
     """Return latest lottery results from the database."""
     try:
         with get_conn() as conn:
