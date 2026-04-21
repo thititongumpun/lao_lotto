@@ -7,6 +7,7 @@ Environment variables (or .env file):
   LOTTO_DB_URL  — PostgreSQL DSN, e.g. postgresql://user:pass@localhost:5432/mydb
 """
 
+import logging
 import os
 import re
 import sys
@@ -20,11 +21,19 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 load_dotenv()
+
+
+class _No404Filter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return " 404 " not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_No404Filter())
 
 URL = "https://www.sanook.com/news/laolotto/"
 
@@ -281,6 +290,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Lao Lottery Fetcher", lifespan=lifespan)
 security = HTTPBasic()
+
+_ALLOWED_PATHS = {"/health", "/run", "/results", "/docs", "/openapi.json"}
+
+
+@app.middleware("http")
+async def block_scanners(request: Request, call_next):
+    if request.url.path not in _ALLOWED_PATHS:
+        return Response(status_code=404)
+    return await call_next(request)
 
 
 def require_auth(credentials: HTTPBasicCredentials = Depends(security)):
