@@ -9,3 +9,11 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# OAuth token cache
+youtube_token.pickle
+
+# Pipeline output
+lottery_output/
+lottery_tts_*.txt
+lottery_tts_*.mp3

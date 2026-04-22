@@ -25,6 +25,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+from content_router import register_jobs
+from content_router import router as content_router
+
 load_dotenv()
 
 
@@ -281,14 +284,16 @@ scheduler = AsyncIOScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.add_job(scheduled_job, CronTrigger(hour=22, minute=0), id="midnight_fetch", replace_existing=True)
+    register_jobs(scheduler)
     scheduler.start()
-    print("[APP] Scheduler started — job fires every midnight.")
+    print("[APP] Scheduler started — midnight fetch at 22:00, content pipeline at 22:30.")
     yield
     scheduler.shutdown()
     print("[APP] Scheduler stopped.")
 
 
 app = FastAPI(title="Lao Lottery Fetcher", lifespan=lifespan)
+app.include_router(content_router)
 security = HTTPBasic()
 
 _ALLOWED_PATHS = {"/health", "/run", "/results", "/docs", "/openapi.json"}
@@ -296,7 +301,8 @@ _ALLOWED_PATHS = {"/health", "/run", "/results", "/docs", "/openapi.json"}
 
 @app.middleware("http")
 async def block_scanners(request: Request, call_next):
-    if request.url.path not in _ALLOWED_PATHS:
+    path = request.url.path
+    if path not in _ALLOWED_PATHS and not path.startswith("/content/"):
         return Response(status_code=404)
     return await call_next(request)
 

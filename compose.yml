@@ -1,11 +1,20 @@
 services:
   lotto:
+    build: .
     image: thititongumpun/lao_lotto:latest
     ports:
       - "8000:8000"
     environment:
       TZ: Asia/Bangkok
       LOTTO_DB_URL: ${LOTTO_DB_URL}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
     env_file:
       - .env
+    volumes:
+      - ./lottery_output:/app/lottery_output
+      - ./youtube_token.pickle:/app/youtube_token.pickle
+      - ./client_secrets.json:/app/client_secrets.json:ro
     restart: unless-stopped
+

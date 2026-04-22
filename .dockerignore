@@ -10,3 +10,8 @@ __pycache__
 README.md
 compose.yml
 Dockerfile
+youtube_token.pickle
+client_secrets.json
+lottery_output/
+lottery_tts_*.txt
+lottery_tts_*.mp3
