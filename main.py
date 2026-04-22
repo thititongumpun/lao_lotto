@@ -280,7 +280,7 @@ scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler.add_job(scheduled_job, CronTrigger(hour=0, minute=0), id="midnight_fetch", replace_existing=True)
+    scheduler.add_job(scheduled_job, CronTrigger(hour=22, minute=0), id="midnight_fetch", replace_existing=True)
     scheduler.start()
     print("[APP] Scheduler started — job fires every midnight.")
     yield
