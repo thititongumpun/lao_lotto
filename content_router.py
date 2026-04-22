@@ -87,7 +87,7 @@ def register_jobs(scheduler) -> None:
     """Add content pipeline cron job to an existing APScheduler instance."""
     scheduler.add_job(
         _scheduled_job,
-        CronTrigger(hour=22, minute=30, timezone="Asia/Bangkok"),
+        CronTrigger(hour=22, minute=30, day_of_week="mon-fri", timezone="Asia/Bangkok"),
         id="content_pipeline",
         replace_existing=True,
     )
