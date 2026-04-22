@@ -12,6 +12,7 @@ wheels/
 
 # OAuth token cache
 youtube_token.pickle
+client_secrets.json
 
 # Pipeline output
 lottery_output/
