@@ -38,7 +38,7 @@ if sys.stdout.encoding != "utf-8":
 if sys.stderr.encoding != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-GEMINI_MODEL  = "gemini-2.5-flash-lite-preview-06-17"
+GEMINI_MODEL  = "gemini-2.5-flash-lite"
 DEFAULT_VOICE = "Aoede"   # bright female — best for Thai narration
 
 # All confirmed female voices in Gemini TTS
