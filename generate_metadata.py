@@ -124,7 +124,7 @@ def generate_lottery_metadata(script_content: str, account_id: str, api_token: s
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_prompt},
         ],
-        "max_tokens": 1024,
+        "max_tokens": 2048,
     }
     headers = {
         "Authorization": f"Bearer {api_token}",
@@ -186,21 +186,79 @@ def ensure_title_suffix(metadata: dict) -> dict:
     return metadata
 
 
+def _repair_truncated_json(text: str) -> str:
+    """Attempt to close an incomplete JSON object caused by token truncation."""
+    # Count unmatched braces/brackets to decide what to close
+    depth_brace   = 0
+    depth_bracket = 0
+    in_string     = False
+    escape_next   = False
+
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth_brace += 1
+        elif ch == '}':
+            depth_brace -= 1
+        elif ch == '[':
+            depth_bracket += 1
+        elif ch == ']':
+            depth_bracket -= 1
+
+    suffix = ""
+    # If we're still inside a string, close it
+    if in_string:
+        suffix += '"'
+    # Close open arrays and objects
+    suffix += ']' * depth_bracket
+    suffix += '}' * depth_brace
+    return text + suffix
+
+
 def parse_metadata(content: str) -> dict:
     """Parse JSON metadata from model response text."""
     # Strip markdown code fences if present
     content = re.sub(r"```json\s*", "", content)
     content = re.sub(r"```\s*", "", content)
 
-    # Try to extract JSON object
+    # Try to extract JSON object (greedy so we grab the outermost {})
     match = re.search(r"\{.*\}", content, re.DOTALL)
-    if match:
+    raw_json = match.group(0) if match else None
+
+    # If no closing brace found, try from the first '{' to end of string
+    if raw_json is None:
+        start = content.find('{')
+        if start != -1:
+            raw_json = content[start:]
+
+    if raw_json:
+        # First attempt: parse as-is
         try:
-            metadata = json.loads(match.group(0))
+            metadata = json.loads(raw_json)
             if "title" in metadata and "description" in metadata:
-                # Ensure tags exist
                 if "tags" not in metadata:
-                    metadata["tags"] = ["#ธรรมะ", "#ข้อคิด", "#เรื่องเล่า"]
+                    metadata["tags"] = []
+                return metadata
+        except json.JSONDecodeError:
+            pass
+
+        # Second attempt: repair truncated JSON then parse
+        try:
+            repaired = _repair_truncated_json(raw_json)
+            metadata = json.loads(repaired)
+            if "title" in metadata and "description" in metadata:
+                if "tags" not in metadata:
+                    metadata["tags"] = []
                 return metadata
         except json.JSONDecodeError:
             pass
