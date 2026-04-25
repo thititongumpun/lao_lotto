@@ -258,8 +258,7 @@ def call_gemini(prompt: str, system: str) -> str:
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("[ERROR] GEMINI_API_KEY environment variable not set.", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
 
     client = genai.Client(api_key=api_key)
 
@@ -387,29 +386,18 @@ def estimate_next_draw(target_weekday: int | None = None) -> str:
 # ── TTS Integration ────────────────────────────────────────────────────────────
 
 def run_tts(text_file: Path, voice: str) -> Path:
-    """
-    Call generate_tts.py (Gemini) with the given text file and voice.
-    Output MP3 lands next to the text file as <stem>.mp3.
-    """
-    import subprocess
-
-    out_dir    = text_file.parent
-    tts_script = Path(__file__).parent / "generate_tts.py"
-    python     = Path(sys.executable)
+    """Call generate_tts.run_tts_file() directly (no subprocess)."""
+    from generate_tts import run_tts_file
 
     print(f"\n[TTS] Voice: {voice}  |  File: {text_file.name}")
-    result = subprocess.run(
-        [str(python), str(tts_script), str(text_file), str(out_dir), voice],
-        capture_output=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"generate_tts.py exited with code {result.returncode}")
+    result = run_tts_file(text_file, text_file.parent, voice)
 
-    mp3_path = out_dir / "narration.mp3"
+    mp3_path = Path(result["mp3"])
     final_mp3 = text_file.with_suffix(".mp3")
-    if mp3_path.exists():
+    if mp3_path != final_mp3 and mp3_path.exists():
         mp3_path.rename(final_mp3)
-    return final_mp3
+        return final_mp3
+    return mp3_path
 
 
 # ── Callable entry point ───────────────────────────────────────────────────────

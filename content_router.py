@@ -6,6 +6,8 @@ Call register_jobs(scheduler) from main's lifespan to add the 22:30 cron job.
 """
 
 import asyncio
+import os
+import shutil
 from datetime import datetime
 
 from apscheduler.triggers.cron import CronTrigger
@@ -61,11 +63,35 @@ async def _run_video(
     await asyncio.to_thread(_video_sync, script_path, audio_path, no_upload, privacy)
 
 
+def _cleanup_pipeline_files(predict: dict, output_dir: str = "lottery_output") -> None:
+    removed = []
+    txt = predict.get("txt")
+    mp3 = predict.get("mp3")
+
+    for path in [txt, mp3]:
+        if path and os.path.exists(path):
+            os.remove(path)
+            removed.append(path)
+
+    if txt:
+        info = os.path.join(os.path.dirname(txt), "audio_info.json")
+        if os.path.exists(info):
+            os.remove(info)
+            removed.append(info)
+
+    if os.path.isdir(output_dir):
+        shutil.rmtree(output_dir)
+        removed.append(output_dir)
+
+    print(f"[CLEANUP] Removed {len(removed)} item(s): {[os.path.basename(p) for p in removed]}")
+
+
 async def _full_pipeline() -> dict:
     now = datetime.now().isoformat()
     try:
         predict = await _run_predict(tts=True)
         await _run_video(script_path=predict.get("txt"), audio_path=predict.get("mp3"))
+        await asyncio.to_thread(_cleanup_pipeline_files, predict)
         result: dict = {"status": "ok", "predict": predict, "ran_at": now}
     except Exception as exc:
         result = {"status": "error", "error": str(exc), "ran_at": now}
