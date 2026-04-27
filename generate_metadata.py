@@ -186,6 +186,33 @@ def ensure_title_suffix(metadata: dict) -> dict:
     return metadata
 
 
+def _sanitize_json_strings(text: str) -> str:
+    """Replace literal newlines/carriage-returns inside JSON string values with escaped versions."""
+    result = []
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            result.append(ch)
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            result.append(ch)
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if in_string and ch == "\n":
+            result.append("\\n")
+            continue
+        if in_string and ch == "\r":
+            continue
+        result.append(ch)
+    return "".join(result)
+
+
 def _repair_truncated_json(text: str) -> str:
     """Attempt to close an incomplete JSON object caused by token truncation."""
     # Count unmatched braces/brackets to decide what to close
@@ -242,26 +269,21 @@ def parse_metadata(content: str) -> dict:
             raw_json = content[start:]
 
     if raw_json:
-        # First attempt: parse as-is
-        try:
-            metadata = json.loads(raw_json)
-            if "title" in metadata and "description" in metadata:
-                if "tags" not in metadata:
-                    metadata["tags"] = []
-                return metadata
-        except json.JSONDecodeError:
-            pass
-
-        # Second attempt: repair truncated JSON then parse
-        try:
-            repaired = _repair_truncated_json(raw_json)
-            metadata = json.loads(repaired)
-            if "title" in metadata and "description" in metadata:
-                if "tags" not in metadata:
-                    metadata["tags"] = []
-                return metadata
-        except json.JSONDecodeError:
-            pass
+        transforms = [
+            lambda t: t,
+            _sanitize_json_strings,
+            _repair_truncated_json,
+            lambda t: _repair_truncated_json(_sanitize_json_strings(t)),
+        ]
+        for transform in transforms:
+            try:
+                metadata = json.loads(transform(raw_json))
+                if "title" in metadata and "description" in metadata:
+                    if "tags" not in metadata:
+                        metadata["tags"] = []
+                    return metadata
+            except (json.JSONDecodeError, Exception):
+                pass
 
     raise ValueError(
         f"Could not parse metadata from response: {content[:300]}")
