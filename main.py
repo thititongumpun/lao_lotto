@@ -286,7 +286,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(scheduled_job, CronTrigger(hour=22, minute=0), id="midnight_fetch", replace_existing=True)
     register_jobs(scheduler)
     scheduler.start()
-    print("[APP] Scheduler started — midnight fetch at 22:00, content pipeline at 22:30.")
+    print("[APP] Scheduler started — Lao fetch at 22:00, content pipeline at 18:00.")
     yield
     scheduler.shutdown()
     print("[APP] Scheduler stopped.")
