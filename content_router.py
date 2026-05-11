@@ -6,9 +6,11 @@ Call register_jobs(scheduler) from main's lifespan to add the 22:30 cron job.
 """
 
 import asyncio
+import json
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -50,6 +52,17 @@ def _video_sync(script_path: str | None, audio_path: str | None, no_upload: bool
     )
 
 
+def _facebook_upload_sync(video_path: str, description: str) -> dict:
+    from facebook import upload_reel_to_facebook
+    return upload_reel_to_facebook(video_path=video_path, description=description)
+
+
+def _youtube_upload_sync(video_path: str, metadata: dict, privacy: str) -> dict:
+    from upload_youtube import get_authenticated_service, initialize_upload
+    youtube = get_authenticated_service()
+    return initialize_upload(youtube, video_path, metadata, privacy_status=privacy)
+
+
 async def _run_predict(tts: bool = True, voice: str = "Aoede", day: int | None = None) -> dict:
     return await asyncio.to_thread(_predict_sync, tts, voice, day)
 
@@ -61,6 +74,14 @@ async def _run_video(
     privacy: str = "public",
 ) -> None:
     await asyncio.to_thread(_video_sync, script_path, audio_path, no_upload, privacy)
+
+
+async def _run_facebook_upload(video_path: str, description: str) -> dict:
+    return await asyncio.to_thread(_facebook_upload_sync, video_path, description)
+
+
+async def _run_youtube_upload(video_path: str, metadata: dict, privacy: str) -> dict:
+    return await asyncio.to_thread(_youtube_upload_sync, video_path, metadata, privacy)
 
 
 def _cleanup_pipeline_files(predict: dict, output_dir: str = "lottery_output") -> None:
@@ -86,13 +107,56 @@ def _cleanup_pipeline_files(predict: dict, output_dir: str = "lottery_output") -
     print(f"[CLEANUP] Removed {len(removed)} item(s): {[os.path.basename(p) for p in removed]}")
 
 
+_VIDEO_PATH   = "lottery_output/lottery_video.mp4"
+_METADATA_FILE = Path(__file__).parent / "metadata.json"
+
+
+def _load_metadata() -> dict:
+    """Load generated metadata.json written by generate_metadata.py."""
+    if _METADATA_FILE.exists():
+        with open(_METADATA_FILE, encoding="utf-8") as fh:
+            return json.load(fh)
+    return {}
+
+
 async def _full_pipeline() -> dict:
     now = datetime.now().isoformat()
     try:
+        # 1. Generate TTS script + audio
         predict = await _run_predict(tts=True)
-        await _run_video(script_path=predict.get("txt"), audio_path=predict.get("mp3"))
+
+        # 2. Generate video only (no YouTube upload yet)
+        await _run_video(
+            script_path=predict.get("txt"),
+            audio_path=predict.get("mp3"),
+            no_upload=True,
+        )
+
+        # 3. Load metadata written by the pipeline (description for Facebook)
+        metadata    = _load_metadata()
+        description = metadata.get("description", "")
+
+        # 4. Upload to Facebook Reels FIRST (best-effort — failure won't block YouTube)
+        fb_error: str | None = None
+        try:
+            print("[PIPELINE] Uploading to Facebook Reels…")
+            await _run_facebook_upload(_VIDEO_PATH, description)
+        except Exception as fb_exc:
+            fb_error = str(fb_exc)
+            print(f"[PIPELINE] Facebook upload failed (continuing to YouTube): {fb_exc}")
+
+        # 5. Upload to YouTube
+        print("[PIPELINE] Uploading to YouTube…")
+        await _run_youtube_upload(_VIDEO_PATH, metadata, privacy="public")
+
         await asyncio.to_thread(_cleanup_pipeline_files, predict)
-        result: dict = {"status": "ok", "predict": predict, "ran_at": now}
+        result: dict = {
+            "status":   "ok",
+            "predict":  predict,
+            "ran_at":   now,
+            "facebook": "error" if fb_error else "ok",
+            **({"facebook_error": fb_error} if fb_error else {}),
+        }
     except Exception as exc:
         result = {"status": "error", "error": str(exc), "ran_at": now}
         print(f"[PIPELINE] error: {exc}")
