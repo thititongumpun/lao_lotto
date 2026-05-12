@@ -52,6 +52,24 @@ def _video_sync(script_path: str | None, audio_path: str | None, no_upload: bool
     )
 
 
+def _generate_metadata_sync(script_path: str) -> dict:
+    import os
+    import json
+    from pathlib import Path
+    from generate_metadata import generate_lottery_metadata
+
+    account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
+    api_token  = os.environ["CLOUDFLARE_API_TOKEN"]
+    script_content = Path(script_path).read_text(encoding="utf-8")
+    metadata = generate_lottery_metadata(script_content, account_id, api_token)
+
+    out = Path(__file__).parent / "metadata.json"
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(metadata, fh, indent=2, ensure_ascii=False)
+    print(f"[PIPELINE] Metadata saved → {out.name}  title: {metadata.get('title','')[:60]}")
+    return metadata
+
+
 def _facebook_upload_sync(video_path: str, description: str) -> dict:
     from facebook import upload_reel_to_facebook
     return upload_reel_to_facebook(video_path=video_path, description=description)
@@ -74,6 +92,10 @@ async def _run_video(
     privacy: str = "public",
 ) -> None:
     await asyncio.to_thread(_video_sync, script_path, audio_path, no_upload, privacy)
+
+
+async def _generate_metadata(script_path: str) -> dict:
+    return await asyncio.to_thread(_generate_metadata_sync, script_path)
 
 
 async def _run_facebook_upload(video_path: str, description: str) -> dict:
@@ -107,16 +129,7 @@ def _cleanup_pipeline_files(predict: dict, output_dir: str = "lottery_output") -
     print(f"[CLEANUP] Removed {len(removed)} item(s): {[os.path.basename(p) for p in removed]}")
 
 
-_VIDEO_PATH   = "lottery_output/lottery_video.mp4"
-_METADATA_FILE = Path(__file__).parent / "metadata.json"
-
-
-def _load_metadata() -> dict:
-    """Load generated metadata.json written by generate_metadata.py."""
-    if _METADATA_FILE.exists():
-        with open(_METADATA_FILE, encoding="utf-8") as fh:
-            return json.load(fh)
-    return {}
+_VIDEO_PATH = "lottery_output/lottery_video.mp4"
 
 
 async def _full_pipeline() -> dict:
@@ -125,15 +138,17 @@ async def _full_pipeline() -> dict:
         # 1. Generate TTS script + audio
         predict = await _run_predict(tts=True)
 
-        # 2. Generate video only (no YouTube upload yet)
+        # 2. Generate metadata from the TTS script and save metadata.json
+        print("[PIPELINE] Generating metadata…")
+        metadata = await _generate_metadata(predict["txt"])
+
+        # 3. Generate video only (upload handled separately below)
         await _run_video(
             script_path=predict.get("txt"),
             audio_path=predict.get("mp3"),
             no_upload=True,
         )
 
-        # 3. Load metadata written by the pipeline (description for Facebook)
-        metadata    = _load_metadata()
         description = metadata.get("description", "")
 
         # 4. Upload to Facebook Reels FIRST (best-effort — failure won't block YouTube)
