@@ -5,7 +5,8 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "WebFetch(domain:news.sanook.com)",
-      "Bash(Remove-Item *)"
+      "Bash(Remove-Item *)",
+      "Bash(dir E:\\\\dev\\\\2026\\\\laolotto\\\\*.py)"
     ]
   }
 }
