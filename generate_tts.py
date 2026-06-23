@@ -44,13 +44,21 @@ def generate_tts_audio(client, text: str, voice_name: str = "Puck") -> bytes:
     return data
 
 
-def save_wav(pcm_data: bytes, filepath: str, sample_rate: int = 24000) -> None:
-    """Save raw PCM data as a WAV file."""
+def save_wav(pcm_chunks, filepath: str, sample_rate: int = 24000) -> int:
+    """Write raw PCM chunks to a WAV file sequentially. Returns total PCM bytes.
+
+    Takes a list of byte chunks instead of one concatenated buffer so we never
+    hold a second full copy of the (multi-MB) audio in memory.
+    """
+    total = 0
     with wave.open(filepath, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)  # 16-bit
         wf.setframerate(sample_rate)
-        wf.writeframes(pcm_data)
+        for chunk in pcm_chunks:
+            wf.writeframes(chunk)
+            total += len(chunk)
+    return total
 
 
 def generate_silence_pcm(duration_seconds: float, sample_rate: int = 24000) -> bytes:
@@ -128,9 +136,7 @@ def main():
         sys.exit(1)
 
     # Add intro/outro silence
-    silence_intro = generate_silence_pcm(1.5)
-    silence_outro = generate_silence_pcm(1.5)
-    all_pcm = silence_intro + pcm_data + silence_outro
+    silence = generate_silence_pcm(1.5)
 
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
@@ -141,10 +147,10 @@ def main():
 
     print()
     print(f"💾 Saving WAV: {wav_path}")
-    save_wav(all_pcm, wav_path)
+    total_bytes = save_wav([silence, pcm_data, silence], wav_path)
 
     # Calculate duration
-    duration_seconds = len(all_pcm) / (24000 * 2)  # 24kHz, 16-bit (2 bytes per sample)
+    duration_seconds = total_bytes / (24000 * 2)  # 24kHz, 16-bit (2 bytes per sample)
     minutes = int(duration_seconds // 60)
     seconds = int(duration_seconds % 60)
     print(f"⏱️  Audio duration: {minutes}m {seconds}s")
@@ -193,18 +199,17 @@ def run_tts_file(story_file, output_dir=None, voice_name: str = "Puck") -> dict:
     pcm_data = generate_tts_audio(client, text, voice_name)
 
     silence = generate_silence_pcm(1.5)
-    all_pcm = silence + pcm_data + silence
 
     os.makedirs(out_dir, exist_ok=True)
     wav_path = str(out_dir / "narration.wav")
     mp3_path = str(out_dir / "narration.mp3")
     info_path = str(out_dir / "audio_info.json")
 
-    save_wav(all_pcm, wav_path)
+    total_bytes = save_wav([silence, pcm_data, silence], wav_path)
     convert_wav_to_mp3(wav_path, mp3_path)
     os.remove(wav_path)
 
-    duration = len(all_pcm) / (24000 * 2)
+    duration = total_bytes / (24000 * 2)
     with open(info_path, "w") as f:
         json.dump({"duration": round(duration, 3)}, f)
 
