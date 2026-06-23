@@ -5,12 +5,10 @@ import re
 import sys
 import time
 import subprocess
-from io import BytesIO
 from pathlib import Path
 
 import ollama
 import requests
-from PIL import Image
 
 from generate_metadata import generate_lottery_metadata
 from upload_youtube import get_authenticated_service, initialize_upload
@@ -70,7 +68,10 @@ def generate_image_cloudflare(prompt: str, negative_prompt: str, output_path: st
         return base64.b64decode(resp.json()["result"]["image"])
 
     image_bytes = with_retry(_call)
-    Image.open(BytesIO(image_bytes)).save(output_path)
+    # Cloudflare flux returns a ready-to-use PNG; write it straight to disk.
+    # ponytail: skip Pillow decode/re-encode — ffmpeg reads the file by content.
+    with open(output_path, "wb") as f:
+        f.write(image_bytes)
     print(f"  Saved: {output_path}")
 
 
