@@ -24,10 +24,6 @@ LOTTERY_STYLE = (
     "Thai traditional pattern border, festive celebration atmosphere, "
     "digital art, no people, no faces, no readable text"
 )
-LOTTERY_NEGATIVE = (
-    "photorealistic, people, faces, body, hands, text, letters, words, watermark, "
-    "dark, gloomy, violent, 3d render, realistic"
-)
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 
@@ -53,7 +49,7 @@ def ollama_generate(prompt: str) -> str:
     return response["message"]["content"].strip()
 
 
-def generate_image_cloudflare(prompt: str, negative_prompt: str, output_path: str) -> None:
+def generate_image_cloudflare(prompt: str, output_path: str) -> None:
     account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
     api_token  = os.environ["CLOUDFLARE_API_TOKEN"]
 
@@ -62,7 +58,7 @@ def generate_image_cloudflare(prompt: str, negative_prompt: str, output_path: st
             f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
             f"/ai/run/@cf/black-forest-labs/flux-1-schnell",
             headers={"Authorization": f"Bearer {api_token}"},
-            json={"prompt": prompt, "num_steps": 4, "width": 1280, "height": 720},
+            json={"prompt": prompt, "steps": 4},  # flux-1-schnell: no width/height, fixed 1024x1024
         )
         resp.raise_for_status()
         return base64.b64decode(resp.json()["result"]["image"])
@@ -104,6 +100,8 @@ def build_video(output_dir: str, image_count: int, audio_path: str, output_path:
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", concat_file,
         "-i", audio_path,
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+               "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1",
         "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-shortest", output_path,
@@ -388,7 +386,7 @@ def lottery_pipeline(
         img_prompt  = lottery_scene_to_image_prompt(scene)
         full_prompt = f"{img_prompt}, {LOTTERY_STYLE}"
         print(f"  Prompt: {full_prompt[:120]}...")
-        generate_image_cloudflare(full_prompt, LOTTERY_NEGATIVE, os.path.join(output_dir, f"{i}.png"))
+        generate_image_cloudflare(full_prompt, os.path.join(output_dir, f"{i}.png"))
 
     build_video(output_dir, len(scenes), audio_path, video_path)
 
