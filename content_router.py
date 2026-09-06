@@ -2,7 +2,8 @@
 Content pipeline router — content_router.py
 
 Mounted into main.py under /content.
-Call register_jobs(scheduler) from main's lifespan to add the 22:30 cron job.
+Call register_jobs(scheduler) from main's lifespan to add the 22:30 content
+and 00:30 horoscope cron jobs.
 """
 
 import asyncio
@@ -21,6 +22,7 @@ router   = APIRouter(prefix="/content", tags=["content"])
 security = HTTPBasic()
 
 _last_run: dict = {}
+_last_horoscope: dict = {}
 
 
 # ── Auth (mirrors main.py — keep in sync or extract to deps.py) ───────────────
@@ -76,12 +78,13 @@ def _extract_result(line: str) -> dict | None:
     return None
 
 
-async def _full_pipeline() -> dict:
-    """Run the full pipeline in a short-lived subprocess so its heavy imports and
-    peak buffers never accumulate in the long-lived server process."""
+async def _run_subprocess(module: str, *args: str) -> dict:
+    """Run `python -m <module> [args]` as a short-lived subprocess so its heavy
+    imports and peak buffers never accumulate in the long-lived server process.
+    Returns the last RESULT_SENTINEL payload, or an error dict if none arrived."""
     now = datetime.now().isoformat()
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "pipeline",
+        sys.executable, "-m", module, *args,
         cwd=str(Path(__file__).parent),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
@@ -101,11 +104,24 @@ async def _full_pipeline() -> dict:
     if result is None:
         result = {
             "status": "error",
-            "error": f"pipeline subprocess produced no result (exit {proc.returncode})",
+            "error": f"{module} subprocess produced no result (exit {proc.returncode})",
             "ran_at": now,
         }
+    return result
+
+
+async def _full_pipeline() -> dict:
+    result = await _run_subprocess("pipeline")
     _last_run.clear()
     _last_run.update(result)
+    return result
+
+
+async def _horoscope_pipeline(date: str | None = None, dry_run: bool = False) -> dict:
+    args = (["--date", date] if date else []) + (["--dry-run"] if dry_run else [])
+    result = await _run_subprocess("horoscope", *args)
+    _last_horoscope.clear()
+    _last_horoscope.update(result)
     return result
 
 
@@ -117,12 +133,24 @@ async def _scheduled_job() -> None:
     print(f"[SCHEDULER] content pipeline done: status={result['status']}")
 
 
+async def _scheduled_horoscope() -> None:
+    print(f"[SCHEDULER] horoscope post starting {datetime.now().isoformat()}")
+    result = await _horoscope_pipeline()
+    print(f"[SCHEDULER] horoscope post done: status={result['status']}")
+
+
 def register_jobs(scheduler) -> None:
-    """Add content pipeline cron job to an existing APScheduler instance."""
+    """Add content pipeline + horoscope cron jobs to an existing APScheduler instance."""
     scheduler.add_job(
         _scheduled_job,
         CronTrigger(hour=22, minute=30, day_of_week="mon-fri", timezone="Asia/Bangkok"),
         id="content_pipeline",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _scheduled_horoscope,
+        CronTrigger(hour=0, minute=30, timezone="Asia/Bangkok"),
+        id="horoscope_post",
         replace_existing=True,
     )
 
@@ -131,13 +159,26 @@ def register_jobs(scheduler) -> None:
 
 @router.get("/health")
 def content_health(_: None = Depends(require_auth)):
-    return {"status": "ok", "last_run": _last_run or None}
+    return {"status": "ok", "last_run": _last_run or None, "last_horoscope": _last_horoscope or None}
 
 
 @router.post("/pipeline/run")
 async def trigger_full(_: None = Depends(require_auth)):
     """Full pipeline: predict → TTS → video → YouTube upload."""
     result = await _full_pipeline()
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
+@router.post("/horoscope/run")
+async def trigger_horoscope(
+    date: str | None = None,
+    dry_run: bool = False,
+    _: None = Depends(require_auth),
+):
+    """Fetch today's 7 Sanook horoscopes, rewrite with Gemini, post text to Facebook."""
+    result = await _horoscope_pipeline(date=date, dry_run=dry_run)
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail=result)
     return result

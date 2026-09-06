@@ -53,6 +53,9 @@ def generate_image_cloudflare(prompt: str, output_path: str) -> None:
     account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
     api_token  = os.environ["CLOUDFLARE_API_TOKEN"]
 
+    # flux-1-schnell caps prompt at 2048 chars; ollama-written prompts can overrun it -> HTTP 400.
+    prompt = prompt.strip()[:2048]
+
     def _call():
         resp = requests.post(
             f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
@@ -60,7 +63,8 @@ def generate_image_cloudflare(prompt: str, output_path: str) -> None:
             headers={"Authorization": f"Bearer {api_token}"},
             json={"prompt": prompt, "steps": 4},  # flux-1-schnell: no width/height, fixed 1024x1024
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
         return base64.b64decode(resp.json()["result"]["image"])
 
     image_bytes = with_retry(_call)

@@ -218,3 +218,24 @@ def upload_reel_to_facebook(video_path: str, description: str) -> dict:
 
     # 5 — Publish
     return publish_reel(video_id, description, access_token)
+
+
+# ── Text-only page post ────────────────────────────────────────────────────────
+
+def post_text_to_facebook(message: str) -> dict:
+    """
+    POST https://graph.facebook.com/v23.0/{page_id}/feed
+         message=...&access_token=...
+
+    Plain text post on the page (no media). Returns {"id": "<page>_<post>"}.
+    """
+    url = f"{GRAPH_BASE}/{VERSION_MANAGE}/{PAGE_ID}/feed"
+    resp = requests.post(
+        url,
+        data={"message": message, "access_token": _get_access_token()},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    print(f"[FACEBOOK] Text post published — {data}")
+    return data
