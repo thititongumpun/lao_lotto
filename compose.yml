@@ -1,6 +1,6 @@
 services:
   lotto:
-    image: thititongumpun/laolotto:latest
+    image: thititongumpun/lao_lotto:latest
     ports:
       - "8011:8000"
     environment:
