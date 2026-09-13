@@ -239,3 +239,22 @@ def post_text_to_facebook(message: str) -> dict:
     data = resp.json()
     print(f"[FACEBOOK] Text post published — {data}")
     return data
+
+
+def post_comment(post_id: str, message: str) -> dict:
+    """
+    POST https://graph.facebook.com/v23.0/{post_id}/comments
+         message=...&access_token=...
+
+    First-comment helper (links go here, never in the post body). Returns {"id": "..."}.
+    """
+    url = f"{GRAPH_BASE}/{VERSION_MANAGE}/{post_id}/comments"
+    resp = requests.post(
+        url,
+        data={"message": message, "access_token": _get_access_token()},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    print(f"[FACEBOOK] Comment published — {data}")
+    return data

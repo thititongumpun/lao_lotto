@@ -59,6 +59,7 @@ All `/content/*` routes use HTTP Basic `admin`/`admin`; other paths 404 via `blo
 |---|---|
 | `LOTTO_DB_URL` | PostgreSQL DSN — required |
 | `TZ` | Timezone for scheduler — set to `Asia/Bangkok` in compose |
+| `NEWS_POSTS_ENABLED` | `1` registers the news text-post jobs (hot/digest/lotto). Unset = jobs off; the `/content/news/*` endpoints still work for dry runs |
 | `GEMINI_API_KEY` | Gemini (narration, TTS, horoscope rewrite) |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Workers AI (metadata, images) |
 | `FACEBOOK_ACCESS_TOKEN` | Page token for Reels + text posts (via `.env`) |
