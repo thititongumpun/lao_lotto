@@ -202,7 +202,10 @@ def run_digest(hours: int = 12, label: str = "สรุปข่าวเช้�
         ids = [s["id"] for s in stories]
         if dry_run:
             return {"status": "dry_run", "video_ids": ids, "message": message}
-        post_id = _publish(message, f"อ่านข่าวทั้งหมด 👉 {SITE_URL}")
+        comment = "\n".join(
+            f"{DIGIT_EMOJI[i]} https://www.1minhotspot.com/v/{s['id']}" for i, s in enumerate(stories)
+        )
+        post_id = _publish(message, comment)
         for vid in ids:
             mark_posted(vid, "digest", post_id)
         return {"status": "ok", "video_ids": ids, "post_id": post_id}
