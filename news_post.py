@@ -179,7 +179,10 @@ def run_hot(hours: int = 6, dry_run: bool = False) -> dict:
         print(message)
         if dry_run:
             return {"status": "dry_run", "video_id": story["id"], "message": message}
-        post_id = _publish(message, f"อ่านฉบับเต็ม 👉 https://www.1minhotspot.com/v/{story['id']}")
+        # story["url"] is the /news/<slug> article link from /api/hot. Facebook
+        # scrapes the comment link for its card; the /v/<id> redirect got a bare
+        # "1minhotspot.com" card, the article URL gets the headline + image.
+        post_id = _publish(message, f"อ่านฉบับเต็ม 👉 {story['url']}")
         mark_posted(story["id"], "hot", post_id)
         return {"status": "ok", "video_id": story["id"], "post_id": post_id}
     except Exception as exc:
@@ -203,7 +206,7 @@ def run_digest(hours: int = 12, label: str = "สรุปข่าวเช้�
         if dry_run:
             return {"status": "dry_run", "video_ids": ids, "message": message}
         comment = "\n".join(
-            f"{DIGIT_EMOJI[i]} https://www.1minhotspot.com/v/{s['id']}" for i, s in enumerate(stories)
+            f"{DIGIT_EMOJI[i]} {s['url']}" for i, s in enumerate(stories)
         )
         post_id = _publish(message, comment)
         for vid in ids:
