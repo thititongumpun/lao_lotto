@@ -54,12 +54,14 @@ SYSTEM = (
 
 POSTER_SYSTEM = (
     "You design a square Facebook news poster from a news photo and its Thai story. "
-    "Answer JSON only with keys layout, has_text, bg_subject, l1, l2, l3. "
+    "Answer JSON only with keys layout, has_text, sensitive, bg_subject, l1, l2, l3. "
     'layout: "portrait" when ONE main person fills a large part of the photo and could be cut out cleanly '
     '(headshot, press photo, studio shot); "scene" for anything else (places, accidents, crowds, '
     "several people, objects, blurred faces, screenshots). "
     "has_text: true only when big headline or caption text is laid over the photo (a ready-made news thumbnail "
     "or collage with a title); a small corner watermark or logos on clothing, signs or products do NOT count. "
+    "sensitive: true when the story involves death, a child victim, serious injury, sexual crime, suicide, or a "
+    "disaster with casualties; false otherwise (politics, court rulings without deaths, celebrity, economy, viral). "
     "bg_subject: English, ONE jaw-dropping, story-specific scene a viewer would stop scrolling for: "
     "exaggerated scale, motion and drama around the story's key symbols, placed on the LEFT half of the frame (the person stands right of centre) "
     '(e.g. "towering Thai Supreme Court facade under a stormy sky split by lightning, a giant golden judge '
@@ -184,13 +186,14 @@ def build_hot_message(story: dict) -> str:
 
 
 def validate_poster_plan(plan: dict) -> dict:
-    """Gemini's poster JSON -> {layout, has_text, bg_prompt, lines[3]}; rejects missing or empty lines."""
+    """Gemini's poster JSON -> {layout, has_text, sensitive, bg_prompt, lines[3]}; rejects missing or empty lines."""
     lines = [str(plan.get(k) or "").strip() for k in ("l1", "l2", "l3")]
     if not all(lines):
         raise RuntimeError(f"poster plan missing headline lines: {plan!r}")
     layout = plan.get("layout") if plan.get("layout") in ("portrait", "scene") else "scene"
     subject = str(plan.get("bg_subject") or "").strip()
     return {"layout": layout, "has_text": plan.get("has_text") is True,
+            "sensitive": plan.get("sensitive") in (True, "true"),  # fail safe: a string "true" still blocks the AI background
             "bg_prompt": f"{subject}, {BG_STYLE}" if subject else "", "lines": lines}
 
 
@@ -213,7 +216,9 @@ def build_poster(story: dict, out_path: str) -> str | None:
             f"หัวข้อ: {story['title']}\nเนื้อหา: {story['body'][:1500]}", POSTER_SYSTEM, thumb.getvalue()))
         print(f"[NEWS] poster plan: {plan}")
         person = background = None
-        if plan["layout"] == "portrait" and plan["bg_prompt"]:
+        if plan["sensitive"]:
+            print("[NEWS] sensitive story -> scene layout, no AI background")
+        elif plan["layout"] == "portrait" and plan["bg_prompt"]:
             person = poster.cutout(photo)
             if person is None:
                 print("[NEWS] cutout rejected -> scene layout")

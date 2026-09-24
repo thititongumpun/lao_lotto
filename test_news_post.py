@@ -51,7 +51,11 @@ def test_poster_plan():
     plan = validate_poster_plan({"layout": "weird", "bg_subject": " court ", "l1": "a", "l2": "b", "l3": "c"})
     assert plan["layout"] == "scene" and plan["has_text"] is False and plan["lines"] == ["a", "b", "c"], plan
     assert plan["bg_prompt"].startswith("court, ") and "no text" in plan["bg_prompt"], plan
+    assert plan["sensitive"] is False, plan
     assert validate_poster_plan({"has_text": "yes", "l1": "a", "l2": "b", "l3": "c"})["has_text"] is False
+    assert validate_poster_plan({"sensitive": "yes", "l1": "a", "l2": "b", "l3": "c"})["sensitive"] is False
+    assert validate_poster_plan({"sensitive": True, "l1": "a", "l2": "b", "l3": "c"})["sensitive"] is True
+    assert validate_poster_plan({"sensitive": "true", "l1": "a", "l2": "b", "l3": "c"})["sensitive"] is True
     try:
         validate_poster_plan({"layout": "portrait", "l1": "a", "l2": "", "l3": "c"})
     except RuntimeError:
