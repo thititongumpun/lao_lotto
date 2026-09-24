@@ -60,14 +60,18 @@ POSTER_SYSTEM = (
     "several people, objects, blurred faces, screenshots). "
     "has_text: true only when big headline or caption text is laid over the photo (a ready-made news thumbnail "
     "or collage with a title); a small corner watermark or logos on clothing, signs or products do NOT count. "
-    "bg_subject: English, 2-4 concrete visual things that fit the story's setting and topic "
-    '(e.g. "Thai Supreme Court building facade, judge gavel on a desk, parliament chamber"), no people. '
+    "bg_subject: English, ONE jaw-dropping, story-specific scene a viewer would stop scrolling for: "
+    "exaggerated scale, motion and drama around the story's key symbols, placed on the LEFT half of the frame (the person stands right of centre) "
+    '(e.g. "towering Thai Supreme Court facade under a stormy sky split by lightning, a giant golden judge '
+    'gavel slamming down on the left with sparks and shattering marble, scattered ballot papers swirling in the wind"), '
+    "no people. "
     "l1, l2, l3: Thai headline in three lines, facts only from the story, no source name, no emoji. "
     "l1 = what happened (max 24 chars), l2 = the key name or keyword (max 14 chars), "
     "l3 = one supporting detail (max 30 chars)."
 )
-BG_STYLE = ("dramatic cinematic news thumbnail background, moody blue and red lighting, high detail, "
-            "empty centre, no people, no text, no letters, no logos, no watermark")
+BG_STYLE = ("epic cinematic movie-poster key art, volumetric god rays, storm clouds, lens flare, glowing sparks and "
+            "embers, deep blue versus fiery red-orange colour contrast, hyper-detailed, main subject on the left, "
+            "darker open space on the right for a person cutout, no people, no text, no letters, no logos, no watermark")
 # Source sites the 1minhotspot article page links to -> credit shown on the poster.
 PUBLISHERS = {"khaosod.co.th": "ข่าวสด", "sanook.com": "Sanook", "thaipbs.or.th": "Thai PBS"}
 SOURCE_RE = re.compile(r'https://(?:www\.|news\.)?(' + "|".join(map(re.escape, PUBLISHERS)) + r')/[^"\'\s<>\\]+')
@@ -75,6 +79,8 @@ OG_IMAGE_RE = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]*content=["\']([^"\']+)'
     r'|<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']og:image["\']'
 )
+NO_POSTER = {"sanook.com"}
+MAX_POSTER_TRIES = 5  # stories checked for a usable photo before falling back to a text post
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
 
@@ -96,6 +102,8 @@ def fetch_source_photo(story: dict) -> tuple[bytes, str]:
     m = SOURCE_RE.search(page)
     if not m:
         raise RuntimeError("no source link on the article page")
+    if m.group(1) in NO_POSTER:
+        raise RuntimeError(f"{m.group(1)} thumbnails carry their own headline")
     src = requests.get(m.group(0), headers=UA, timeout=20).text
     og = OG_IMAGE_RE.search(src)
     if not og:
@@ -265,18 +273,22 @@ def _publish(message: str, comment: str, image_path: str | None = None) -> str:
 def run_hot(hours: int = 6, dry_run: bool = False) -> dict:
     try:
         ensure_table()
-        story = next(
-            (s for s in fetch_hot(hours, 20)
-             if (s.get("body") or "").strip() and not already_posted(s["id"], "hot")),
-            None,
-        )
-        if story is None:
+        candidates = [s for s in fetch_hot(hours, 20)
+                      if (s.get("body") or "").strip() and not already_posted(s["id"], "hot")]
+        if not candidates:
             print("[NEWS] hot: no new story")
             return {"status": "skipped", "reason": "no_new_story"}
-        print(f"[NEWS] hot: {story['id']} {story['title']}")
+        # first story that yields a poster; none in the first few -> the newest one as a text post
+        story, image = candidates[0], None
+        for s in candidates[:MAX_POSTER_TRIES]:
+            print(f"[NEWS] hot candidate: {s['id']} {s['title']}")
+            poster_path = build_poster(s, f"/tmp/poster_{s['id']}.jpg")
+            if poster_path:
+                story, image = s, poster_path
+                break
+        print(f"[NEWS] hot: {story['id']} {story['title']} ({'poster' if image else 'text only'})")
         message = build_hot_message(story)
         print(message)
-        image = build_poster(story, f"/tmp/poster_{story['id']}.jpg")
         if dry_run:
             return {"status": "dry_run", "video_id": story["id"], "message": message, "poster": image}
         # story["url"] is the /news/<slug> article link from /api/hot. Facebook

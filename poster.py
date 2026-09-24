@@ -39,11 +39,13 @@ def cutout(photo: Image.Image) -> Image.Image | None:
 
 def _portrait(person: Image.Image, background: Image.Image) -> Image.Image:
     bg = ImageEnhance.Brightness(ImageOps.fit(background.convert("RGB"), (S, S))).enhance(0.8)
-    ph = 760
+    ph = 680
     p = person.resize((round(person.width * ph / person.height), ph), Image.LANCZOS)
     if p.width > S:  # very wide cutouts (two people, arms out): fit width instead
         p = p.resize((S, round(p.height * S / p.width)), Image.LANCZOS)
-    bg.paste(p, ((S - p.width) // 2, TEXT_TOP + 50 - p.height), p)
+    # right of centre so the background's key symbols (prompted onto the left half) stay visible
+    x = min(S - p.width, max(0, round(S * 0.62 - p.width / 2)))
+    bg.paste(p, (x, TEXT_TOP + 50 - p.height), p)
     return bg
 
 
