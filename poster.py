@@ -18,8 +18,12 @@ FONT = str(Path(__file__).parent / "assets" / "Kanit-Black.ttf")
 S = 1080
 TEXT_TOP = 700
 MAX_TEXT_W = 1000
-# (default size, fill, stroke, red band behind)
+# (default size, fill, stroke, band behind)
 LINE_STYLE = [(88, "white", 5, True), (140, (255, 214, 31), 8, False), (72, "white", 5, False)]
+# sensitive stories (death, child victim, sexual crime, disaster): no red/yellow, smaller headline
+LINE_STYLE_MUTED = [(88, "white", 5, True), (110, "white", 8, False), (72, "white", 5, False)]
+BAND_COLOR = (190, 0, 0)
+BAND_COLOR_MUTED = (45, 45, 45)
 LINE_Y = [TEXT_TOP, TEXT_TOP + 100, TEXT_TOP + 270]
 MIN_PERSON, MAX_PERSON = 0.08, 0.85  # share of the photo the cutout mask must cover
 
@@ -49,21 +53,24 @@ def _portrait(person: Image.Image, background: Image.Image) -> Image.Image:
     return bg
 
 
-def _scene(photo: Image.Image) -> Image.Image:
+def _scene(photo: Image.Image, sensitive: bool = False) -> Image.Image:
     photo = photo.convert("RGB")
     bg = ImageOps.fit(photo, (S, S)).filter(ImageFilter.GaussianBlur(40))
     bg = ImageEnhance.Brightness(bg).enhance(0.6)
     top = ImageOps.fit(photo, (S, 680))
-    top = ImageEnhance.Color(ImageEnhance.Contrast(top).enhance(1.15)).enhance(1.3)
+    if not sensitive:  # keep natural colours for sensitive stories: no contrast/saturation boost
+        top = ImageEnhance.Color(ImageEnhance.Contrast(top).enhance(1.15)).enhance(1.3)
     bg.paste(top, (0, 30))
     return bg
 
 
-def _text(img: Image.Image, lines: list[str], credit: str) -> None:
+def _text(img: Image.Image, lines: list[str], credit: str, sensitive: bool = False) -> None:
+    style = LINE_STYLE_MUTED if sensitive else LINE_STYLE
+    band_color = BAND_COLOR_MUTED if sensitive else BAND_COLOR
     grad = Image.linear_gradient("L").resize((S, 520)).point(lambda v: int(v * 0.9))
     img.paste(Image.new("RGB", (S, 520), "black"), (0, S - 520), grad)
     d = ImageDraw.Draw(img)
-    for text, y, (size, fill, stroke, band) in zip(lines, LINE_Y, LINE_STYLE):
+    for text, y, (size, fill, stroke, band) in zip(lines, LINE_Y, style):
         while True:  # shrink until the line fits
             f = ImageFont.truetype(FONT, size)
             x0, y0, x1, y1 = d.textbbox((0, 0), text, font=f, stroke_width=stroke)
@@ -73,7 +80,7 @@ def _text(img: Image.Image, lines: list[str], credit: str) -> None:
         x = (S - (x1 - x0)) // 2 - x0
         if band:
             d.polygon([(x + x0 - 40, y + y0 - 8), (x + x1 + 50, y + y0 - 18),
-                       (x + x1 + 30, y + y1 + 14), (x + x0 - 50, y + y1 + 22)], fill=(190, 0, 0))
+                       (x + x1 + 30, y + y1 + 14), (x + x0 - 50, y + y1 + 22)], fill=band_color)
         d.text((x, y), text, font=f, fill=fill, stroke_width=stroke, stroke_fill="black")
     cf = ImageFont.truetype(FONT, 24)
     d.text((16, 14), credit, font=cf, fill="white",
@@ -81,9 +88,12 @@ def _text(img: Image.Image, lines: list[str], credit: str) -> None:
 
 
 def render(photo: Image.Image, lines: list[str], credit: str, out_path: str,
-           person: Image.Image | None = None, background: Image.Image | None = None) -> str:
-    """portrait layout when both person and background are given, scene layout otherwise."""
-    img = _portrait(person, background) if person is not None and background is not None else _scene(photo)
-    _text(img, lines, credit)
+           person: Image.Image | None = None, background: Image.Image | None = None,
+           sensitive: bool = False) -> str:
+    """portrait layout when both person and background are given, scene layout otherwise.
+    sensitive (death, child victim, sexual crime, disaster): muted style, natural-colour photo."""
+    img = (_portrait(person, background) if person is not None and background is not None
+           else _scene(photo, sensitive))
+    _text(img, lines, credit, sensitive)
     img.save(out_path, "JPEG", quality=90)
     return out_path

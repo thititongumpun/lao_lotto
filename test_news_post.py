@@ -71,6 +71,12 @@ def test_render_both_layouts():
         poster.render(photo, lines, "ภาพ: ข่าวสด", out, **kw)
         assert Image.open(out).size == (1080, 1080), out
 
+    poster.render(photo, lines, "ภาพ: ข่าวสด", "/tmp/t_scene_muted.jpg", sensitive=True)
+    assert Image.open("/tmp/t_scene_muted.jpg").size == (1080, 1080)
+    normal = Image.open("/tmp/t_scene.jpg").tobytes()
+    muted = Image.open("/tmp/t_scene_muted.jpg").tobytes()
+    assert normal != muted, "sensitive style should differ from the normal scene poster"
+
 
 if __name__ == "__main__":
     test_digest()

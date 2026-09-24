@@ -230,7 +230,8 @@ def build_poster(story: dict, out_path: str) -> str | None:
         if background is None and plan["has_text"]:  # scene layout would print our headline over theirs
             print("[NEWS] source photo already has headline text -> text-only post")
             return None
-        return poster.render(photo, plan["lines"], f"ภาพ: {credit}", out_path, person, background)
+        return poster.render(photo, plan["lines"], f"ภาพ: {credit}", out_path, person, background,
+                             sensitive=plan["sensitive"])
     except Exception as exc:
         print(f"[NEWS] poster skipped: {exc}")
         return None
