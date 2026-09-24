@@ -76,7 +76,7 @@ def _text(img: Image.Image, lines: list[str], credit: str) -> None:
                        (x + x1 + 30, y + y1 + 14), (x + x0 - 50, y + y1 + 22)], fill=(190, 0, 0))
         d.text((x, y), text, font=f, fill=fill, stroke_width=stroke, stroke_fill="black")
     cf = ImageFont.truetype(FONT, 24)
-    d.text((S - 16 - d.textlength(credit, font=cf), 14), credit, font=cf, fill="white",
+    d.text((16, 14), credit, font=cf, fill="white",
            stroke_width=2, stroke_fill="black")
 
 
