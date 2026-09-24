@@ -3,7 +3,11 @@ both offline. Run: uv run python test_news_post.py"""
 
 from datetime import date
 
-from news_post import build_digest_message, build_lotto_message, validate_hot
+from PIL import Image
+
+import poster
+from news_post import (OG_IMAGE_RE, SOURCE_RE, build_digest_message, build_lotto_message,
+                       validate_hot, validate_poster_plan)
 
 STORIES = [{"id": str(i), "title": f"ข่าวที่ {i}", "body": "x", "category": "viral"} for i in range(1, 8)]
 
@@ -33,8 +37,42 @@ def test_lotto():
     assert "1234" in msg and "#หวยลาว #ผลหวยลาว" in msg and "http" not in msg, msg
 
 
+def test_source_and_og():
+    page = '<a href="https://www.khaosod.co.th/breaking-news/news_10411999">ต้นฉบับ</a>'
+    m = SOURCE_RE.search(page)
+    assert m and m.group(1) == "khaosod.co.th" and m.group(0).endswith("news_10411999"), m
+    for html in ('<meta property="og:image" content="https://x/a.jpg"/>',
+                 '<meta content="https://x/a.jpg" property="og:image">'):
+        og = OG_IMAGE_RE.search(html)
+        assert (og.group(1) or og.group(2)) == "https://x/a.jpg", html
+
+
+def test_poster_plan():
+    plan = validate_poster_plan({"layout": "weird", "bg_subject": " court ", "l1": "a", "l2": "b", "l3": "c"})
+    assert plan["layout"] == "scene" and plan["has_text"] is False and plan["lines"] == ["a", "b", "c"], plan
+    assert plan["bg_prompt"].startswith("court, ") and "no text" in plan["bg_prompt"], plan
+    assert validate_poster_plan({"has_text": "yes", "l1": "a", "l2": "b", "l3": "c"})["has_text"] is False
+    try:
+        validate_poster_plan({"layout": "portrait", "l1": "a", "l2": "", "l3": "c"})
+    except RuntimeError:
+        return
+    raise AssertionError("plan without l2 accepted")
+
+
+def test_render_both_layouts():
+    photo = Image.new("RGB", (1200, 675), (40, 90, 140))
+    person = Image.new("RGBA", (400, 600), (230, 200, 180, 255))
+    lines = ["ศาลฎีกาตัดสิทธิ์ 10 ปี", "“สัจจพงษ์”", "พ่อ สส.ภูมิใจไทย ปมฮั้ว สว. ข้อความยาวมากเกินบรรทัด"]
+    for out, kw in (("/tmp/t_scene.jpg", {}), ("/tmp/t_portrait.jpg", {"person": person, "background": photo})):
+        poster.render(photo, lines, "ภาพ: ข่าวสด", out, **kw)
+        assert Image.open(out).size == (1080, 1080), out
+
+
 if __name__ == "__main__":
     test_digest()
     test_validate_hot()
     test_lotto()
+    test_source_and_og()
+    test_poster_plan()
+    test_render_both_layouts()
     print("ok")

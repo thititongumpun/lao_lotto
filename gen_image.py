@@ -75,6 +75,29 @@ def generate_image_cloudflare(prompt: str, output_path: str) -> None:
     print(f"  Saved: {output_path}")
 
 
+def generate_image_klein(prompt: str, output_path: str, width: int = 1024, height: int = 1024) -> None:
+    """flux-2-klein-4b (~104 Neurons at 1024x1024): multipart form in, base64 JPEG out. Unlike schnell it takes a size."""
+    account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
+    api_token  = os.environ["CLOUDFLARE_API_TOKEN"]
+
+    def _call():
+        resp = requests.post(
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+            f"/ai/run/@cf/black-forest-labs/flux-2-klein-4b",
+            headers={"Authorization": f"Bearer {api_token}"},
+            files={k: (None, str(v)) for k, v in
+                   {"prompt": prompt.strip()[:2048], "width": width, "height": height}.items()},
+            timeout=120,
+        )
+        if not resp.ok:
+            raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
+        return base64.b64decode(resp.json()["result"]["image"])
+
+    with open(output_path, "wb") as f:
+        f.write(with_retry(_call))
+    print(f"  Saved: {output_path}")
+
+
 def get_audio_duration(audio_path: str) -> float:
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",

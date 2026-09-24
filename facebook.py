@@ -241,6 +241,28 @@ def post_text_to_facebook(message: str) -> dict:
     return data
 
 
+def post_photo_to_facebook(image_path: str, message: str) -> dict:
+    """
+    POST https://graph.facebook.com/v23.0/{page_id}/photos
+         source=<file>&message=...&access_token=...
+
+    Photo post with caption. Returns {"id": "<photo>", "post_id": "<page>_<post>"};
+    comments go on post_id, same as a text post's id.
+    """
+    url = f"{GRAPH_BASE}/{VERSION_MANAGE}/{PAGE_ID}/photos"
+    with open(image_path, "rb") as f:
+        resp = requests.post(
+            url,
+            data={"message": message, "access_token": _get_access_token()},
+            files={"source": (os.path.basename(image_path), f, "image/jpeg")},
+            timeout=60,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    print(f"[FACEBOOK] Photo post published — {data}")
+    return data
+
+
 def post_comment(post_id: str, message: str) -> dict:
     """
     POST https://graph.facebook.com/v23.0/{post_id}/comments

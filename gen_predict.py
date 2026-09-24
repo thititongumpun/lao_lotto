@@ -285,6 +285,31 @@ def call_gemini(prompt: str, system: str) -> str:
     return "".join(parts)
 
 
+def call_gemini_json(prompt: str, system: str, image: bytes | None = None, mime: str = "image/jpeg") -> dict:
+    """One non-streaming Gemini call that must answer JSON; optional image part (vision)."""
+    import json
+
+    from google import genai
+    from google.genai import types
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+    contents = [types.Part.from_bytes(data=image, mime_type=mime), prompt] if image else prompt
+    client = genai.Client(api_key=api_key)  # keep a reference: an unreferenced Client closes mid-call
+    resp = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.4,
+            max_output_tokens=1024,
+            response_mime_type="application/json",
+        ),
+    )
+    return json.loads(resp.text)
+
+
 # ── TTS Text Cleaner ──────────────────────────────────────────────────────────
 
 def clean_for_tts(text: str) -> str:

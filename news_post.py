@@ -52,6 +52,32 @@ SYSTEM = (
 )
 
 
+POSTER_SYSTEM = (
+    "You design a square Facebook news poster from a news photo and its Thai story. "
+    "Answer JSON only with keys layout, has_text, bg_subject, l1, l2, l3. "
+    'layout: "portrait" when ONE main person fills a large part of the photo and could be cut out cleanly '
+    '(headshot, press photo, studio shot); "scene" for anything else (places, accidents, crowds, '
+    "several people, objects, blurred faces, screenshots). "
+    "has_text: true only when big headline or caption text is laid over the photo (a ready-made news thumbnail "
+    "or collage with a title); a small corner watermark or logos on clothing, signs or products do NOT count. "
+    "bg_subject: English, 2-4 concrete visual things that fit the story's setting and topic "
+    '(e.g. "Thai Supreme Court building facade, judge gavel on a desk, parliament chamber"), no people. '
+    "l1, l2, l3: Thai headline in three lines, facts only from the story, no source name, no emoji. "
+    "l1 = what happened (max 24 chars), l2 = the key name or keyword (max 14 chars), "
+    "l3 = one supporting detail (max 30 chars)."
+)
+BG_STYLE = ("dramatic cinematic news thumbnail background, moody blue and red lighting, high detail, "
+            "empty centre, no people, no text, no letters, no logos, no watermark")
+# Source sites the 1minhotspot article page links to -> credit shown on the poster.
+PUBLISHERS = {"khaosod.co.th": "ข่าวสด", "sanook.com": "Sanook", "thaipbs.or.th": "Thai PBS"}
+SOURCE_RE = re.compile(r'https://(?:www\.|news\.)?(' + "|".join(map(re.escape, PUBLISHERS)) + r')/[^"\'\s<>\\]+')
+OG_IMAGE_RE = re.compile(
+    r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]*content=["\']([^"\']+)'
+    r'|<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']og:image["\']'
+)
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
+
+
 # ── Source ─────────────────────────────────────────────────────────────────────
 
 def fetch_hot(hours: int, limit: int) -> list[dict]:
@@ -60,6 +86,24 @@ def fetch_hot(hours: int, limit: int) -> list[dict]:
     items = resp.json()
     print(f"[NEWS] /api/hot hours={hours} limit={limit}: {len(items)} item(s)")
     return items
+
+
+def fetch_source_photo(story: dict) -> tuple[bytes, str]:
+    """/api/hot has no photo: 1minhotspot article page -> original source link -> its og:image.
+    Returns (jpeg/png bytes, publisher credit name)."""
+    # ponytail: scrapes the article HTML; add sourceUrl to /api/hot (D1 clip_scripts.source_url) if this breaks
+    page = requests.get(story["url"], headers=UA, timeout=20).text
+    m = SOURCE_RE.search(page)
+    if not m:
+        raise RuntimeError("no source link on the article page")
+    src = requests.get(m.group(0), headers=UA, timeout=20).text
+    og = OG_IMAGE_RE.search(src)
+    if not og:
+        raise RuntimeError(f"no og:image on {m.group(0)}")
+    resp = requests.get(og.group(1) or og.group(2), headers=UA, timeout=30)
+    resp.raise_for_status()
+    print(f"[NEWS] photo: {m.group(0)} ({len(resp.content)} bytes)")
+    return resp.content, PUBLISHERS[m.group(1)]
 
 
 # ── Dedupe table ───────────────────────────────────────────────────────────────
@@ -131,6 +175,54 @@ def build_hot_message(story: dict) -> str:
     return validate_hot(call_gemini(build_hot_prompt(story), SYSTEM))
 
 
+def validate_poster_plan(plan: dict) -> dict:
+    """Gemini's poster JSON -> {layout, has_text, bg_prompt, lines[3]}; rejects missing or empty lines."""
+    lines = [str(plan.get(k) or "").strip() for k in ("l1", "l2", "l3")]
+    if not all(lines):
+        raise RuntimeError(f"poster plan missing headline lines: {plan!r}")
+    layout = plan.get("layout") if plan.get("layout") in ("portrait", "scene") else "scene"
+    subject = str(plan.get("bg_subject") or "").strip()
+    return {"layout": layout, "has_text": plan.get("has_text") is True,
+            "bg_prompt": f"{subject}, {BG_STYLE}" if subject else "", "lines": lines}
+
+
+def build_poster(story: dict, out_path: str) -> str | None:
+    """Photo poster for a hot story, or None (caller posts text only). Never raises."""
+    try:
+        import io
+
+        from PIL import Image
+
+        import poster
+        from gen_predict import call_gemini_json
+
+        photo_bytes, credit = fetch_source_photo(story)
+        photo = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
+        thumb = io.BytesIO()
+        photo.copy().resize((min(photo.width, 768), round(photo.height * min(photo.width, 768) / photo.width))) \
+            .save(thumb, "JPEG", quality=85)  # small copy for Gemini: fewer image tokens
+        plan = validate_poster_plan(call_gemini_json(
+            f"หัวข้อ: {story['title']}\nเนื้อหา: {story['body'][:1500]}", POSTER_SYSTEM, thumb.getvalue()))
+        print(f"[NEWS] poster plan: {plan}")
+        person = background = None
+        if plan["layout"] == "portrait" and plan["bg_prompt"]:
+            person = poster.cutout(photo)
+            if person is None:
+                print("[NEWS] cutout rejected -> scene layout")
+            else:
+                from gen_image import generate_image_klein
+                bg_path = out_path + ".bg.jpg"
+                generate_image_klein(plan["bg_prompt"], bg_path)
+                background = Image.open(bg_path)
+        if background is None and plan["has_text"]:  # scene layout would print our headline over theirs
+            print("[NEWS] source photo already has headline text -> text-only post")
+            return None
+        return poster.render(photo, plan["lines"], f"ภาพ: {credit}", out_path, person, background)
+    except Exception as exc:
+        print(f"[NEWS] poster skipped: {exc}")
+        return None
+
+
 def build_digest_message(stories: list[dict], label: str) -> str:
     lines = [f"📰 {label} {thai_date(datetime.now(BANGKOK).date())}", ""]
     lines += [f"{DIGIT_EMOJI[i]} {s['title'].strip()}" for i, s in enumerate(stories[:5])]
@@ -154,9 +246,16 @@ def build_lotto_message(row: dict) -> str:
 
 # ── Post ───────────────────────────────────────────────────────────────────────
 
-def _publish(message: str, comment: str) -> str:
-    from facebook import post_comment, post_text_to_facebook
-    post_id = post_text_to_facebook(message)["id"]
+def _publish(message: str, comment: str, image_path: str | None = None) -> str:
+    from facebook import post_comment, post_photo_to_facebook, post_text_to_facebook
+    post_id = None
+    if image_path:
+        try:
+            post_id = post_photo_to_facebook(image_path, message)["post_id"]
+        except Exception as exc:  # the story still goes out as text
+            print(f"[NEWS] photo post failed, posting text: {exc}")
+    if post_id is None:
+        post_id = post_text_to_facebook(message)["id"]
     post_comment(post_id, comment)
     return post_id
 
@@ -177,14 +276,15 @@ def run_hot(hours: int = 6, dry_run: bool = False) -> dict:
         print(f"[NEWS] hot: {story['id']} {story['title']}")
         message = build_hot_message(story)
         print(message)
+        image = build_poster(story, f"/tmp/poster_{story['id']}.jpg")
         if dry_run:
-            return {"status": "dry_run", "video_id": story["id"], "message": message}
+            return {"status": "dry_run", "video_id": story["id"], "message": message, "poster": image}
         # story["url"] is the /news/<slug> article link from /api/hot. Facebook
         # scrapes the comment link for its card; the /v/<id> redirect got a bare
         # "1minhotspot.com" card, the article URL gets the headline + image.
-        post_id = _publish(message, f"อ่านฉบับเต็ม 👉 {story['url']}")
+        post_id = _publish(message, f"อ่านฉบับเต็ม 👉 {story['url']}", image)
         mark_posted(story["id"], "hot", post_id)
-        return {"status": "ok", "video_id": story["id"], "post_id": post_id}
+        return {"status": "ok", "video_id": story["id"], "post_id": post_id, "poster": bool(image)}
     except Exception as exc:
         print(f"[NEWS] hot error: {exc}")
         return {"status": "error", "error": str(exc)}
