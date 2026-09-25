@@ -65,20 +65,25 @@ def _portrait(person: Image.Image, background: Image.Image) -> Image.Image:
 # per-story cartoon effect (Gemini picks one) -> backdrop tone (dark, light) for colorize
 FX_TONE = {"rain": ((0, 8, 30), (70, 150, 255)), "storm": ((5, 0, 25), (120, 90, 255)),
            "fire": ((30, 0, 0), (255, 120, 10)), "money": ((0, 20, 5), (230, 190, 40)),
-           "party": ((25, 0, 35), (255, 60, 170)), "none": ((20, 0, 0), (230, 40, 20))}
+           "party": ((25, 0, 35), (255, 60, 170)), "justice": ((10, 5, 30), (210, 165, 60)),
+           "police": ((0, 0, 25), (60, 70, 235)), "sport": ((0, 20, 25), (0, 200, 160)),
+           "alert": ((25, 18, 0), (245, 195, 0)), "none": ((20, 0, 0), (230, 40, 20))}
+EMOJI_FONT = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"  # apt fonts-noto-color-emoji
+GOLD, GOLD_DARK = (250, 200, 40, 255), (90, 55, 0, 255)
 PX, PY, PW, PH = 70, 40, 940, 640  # the photo print, before its -3 degree tilt
 POP = 130  # px of the people's heads/shoulders that break out above the print
 
 
 def _scene(photo: Image.Image, sensitive: bool = False, pop: Image.Image | None = None,
-           fx: str = "none", tag: str = "ข่าวด่วน") -> Image.Image:
+           fx: str = "none", tag: str = "ข่าวด่วน", emoji: list[str] | None = None,
+           tone: tuple | None = None) -> Image.Image:
     photo = photo.convert("RGB")
     bg = ImageOps.fit(photo, (S, S)).filter(ImageFilter.GaussianBlur(40))
     bg = ImageEnhance.Brightness(bg).enhance(0.6)
     if sensitive:  # natural colours, plain full-width photo, no effects
         bg.paste(ImageOps.fit(photo, (S, 680)), (0, 30))
         return bg
-    return _scene_print(photo, bg, pop, fx if fx in FX_TONE else "none", tag)
+    return _scene_print(photo, bg, pop, fx if fx in FX_TONE else "none", tag, emoji or [], tone)
 
 
 def _fit(im: Image.Image) -> Image.Image:
@@ -87,18 +92,21 @@ def _fit(im: Image.Image) -> Image.Image:
 
 
 def _scene_print(photo: Image.Image, blurred: Image.Image, pop: Image.Image | None,
-                 fx: str, tag: str) -> Image.Image:
+                 fx: str, tag: str, emoji: list[str], tone: tuple | None) -> Image.Image:
     """The photo as a tilted white-bordered print over a toned, speed-lined backdrop with a cartoon
     effect; the people (pop, rembg mask) break out above the print; a stamp pins the top-right corner
-    (and covers the source watermark)."""
+    (and covers the source watermark). fx "none": the story's emoji as stickers and its own tone."""
     rng = random.Random(f"{fx}{tag}{photo.size}")
-    bg = ImageOps.colorize(ImageOps.grayscale(blurred), *FX_TONE[fx]).convert("RGBA")
+    stickers = emoji if fx == "none" else []
+    tone = tone if fx == "none" and tone else FX_TONE[fx]
+    bg = ImageOps.colorize(ImageOps.grayscale(blurred), *tone).convert("RGBA")
     streaks = Image.new("RGBA", (S * 2, S * 2))
     sd = ImageDraw.Draw(streaks)
     for i in range(0, S * 2, 46):
         sd.line([(i, 0), (i, S * 2)], fill=(255, 255, 255, 18), width=14)
     bg.alpha_composite(streaks.rotate(28).crop((S // 2, S // 2, S // 2 + S, S // 2 + S)))
     _fx(bg, fx, rng, front=False)
+    _stickers(bg, stickers, rng, front=False)
 
     top = _fit(photo)
     top = ImageEnhance.Color(ImageEnhance.Contrast(top).enhance(1.2)).enhance(1.35)
@@ -137,6 +145,7 @@ def _scene_print(photo: Image.Image, blurred: Image.Image, pop: Image.Image | No
     for l in layers:
         bg.alpha_composite(l)
     _fx(bg, fx, rng, front=True)
+    _stickers(bg, stickers, rng, front=True)
 
     f = ImageFont.truetype(FONT, 54)
     x0, y0, x1, y1 = f.getbbox(tag)
@@ -222,7 +231,152 @@ def _fx(img: Image.Image, fx: str, rng: random.Random, front: bool) -> None:
             pts = [(x + px * ca - py * sa, y + px * sa + py * ca) for px, py in
                    ((-w, -h), (w, -h), (w, h), (-w, h))]
             d.polygon(pts, fill=(*rng.choice(colours), 255))
+    elif fx == "justice":
+        _justice(d, layer, rng, front)
+    elif fx == "police":
+        layer = _police(rng, front)
+    elif fx == "sport":
+        _sport(d, layer, rng, front)
+    elif fx == "alert":
+        _alert(d, layer, rng, front)
     img.alpha_composite(layer)
+
+
+def _sparkle(d: ImageDraw.ImageDraw, x: float, y: float, r: float, fill) -> None:
+    d.polygon([(x, y - r), (x + r / 4, y - r / 4), (x + r, y), (x + r / 4, y + r / 4),
+               (x, y + r), (x - r / 4, y + r / 4), (x - r, y), (x - r / 4, y - r / 4)], fill=fill)
+
+
+def _paste_rotated(layer: Image.Image, part: Image.Image, angle: float, cx: int, cy: int) -> None:
+    part = part.rotate(angle, resample=Image.BICUBIC, expand=True)
+    layer.alpha_composite(part, (cx - part.width // 2, cy - part.height // 2))
+
+
+def _justice(d, layer, rng, front) -> None:
+    """Gold scales of justice top-left, a gavel top-right, peeking round the print; sparkles in front."""
+    if front:
+        for _ in range(8):
+            _sparkle(d, *_edge_xy(rng), rng.randint(10, 20), (255, 245, 190, 255))
+        return
+    sc = Image.new("RGBA", (330, 300))
+    sd = ImageDraw.Draw(sc)
+    ol = dict(fill=GOLD, outline=GOLD_DARK, width=5)
+    sd.rectangle([155, 40, 175, 250], **ol)                       # post
+    sd.polygon([(105, 290), (225, 290), (190, 248), (140, 248)], **ol)  # base
+    sd.rectangle([20, 52, 310, 70], **ol)                         # beam
+    for x in (40, 290):
+        sd.line([(x, 70), (x - 32, 175)], fill=GOLD_DARK, width=4)
+        sd.line([(x, 70), (x + 32, 175)], fill=GOLD_DARK, width=4)
+        sd.pieslice([x - 50, 130, x + 50, 220], 0, 180, **ol)    # pan
+    sd.ellipse([145, 12, 185, 52], **ol)                          # knob
+    _paste_rotated(layer, sc, 8, 120, 130)
+    g = Image.new("RGBA", (300, 240))
+    gd = ImageDraw.Draw(g)
+    gd.rectangle([138, 70, 162, 235], fill=(150, 85, 30, 255), outline=(60, 30, 0, 255), width=5)  # handle
+    gd.rounded_rectangle([40, 10, 260, 90], radius=18, fill=(170, 100, 40, 255), outline=(60, 30, 0, 255), width=6)
+    gd.rectangle([70, 10, 90, 90], fill=GOLD, outline=(60, 30, 0, 255), width=4)   # gold bands
+    gd.rectangle([210, 10, 230, 90], fill=GOLD, outline=(60, 30, 0, 255), width=4)
+    _paste_rotated(layer, g, -35, S - 110, 150)
+
+
+def _police(rng, front) -> Image.Image:
+    """Red and blue siren glow from the top corners with fanned light rays; lens flares in front."""
+    layer = Image.new("RGBA", (S, S))
+    d = ImageDraw.Draw(layer)
+    if front:
+        for _ in range(5):
+            x, y = _edge_xy(rng)
+            r = rng.randint(14, 30)
+            d.ellipse([x - r, y - r, x + r, y + r], fill=(255, 255, 255, 70))
+            _sparkle(d, x, y, r * 1.6, (255, 255, 255, 200))
+        return layer.filter(ImageFilter.GaussianBlur(1))
+    for (cx, cy), col in (((0, 0), (255, 30, 30)), ((S, 0), (40, 90, 255))):
+        for i in range(9):  # fanned rays
+            a = math.radians((i * 10 + (0 if cx == 0 else 90)) + 2)
+            b = a + math.radians(4)
+            d.polygon([(cx, cy), (cx + math.cos(a) * 1500, cy + math.sin(a) * 1500),
+                       (cx + math.cos(b) * 1500, cy + math.sin(b) * 1500)], fill=(*col, 55))
+        d.ellipse([cx - 330, cy - 330, cx + 330, cy + 330], fill=(*col, 170))
+    return layer.filter(ImageFilter.GaussianBlur(28))
+
+
+def _sport(d, layer, rng, front) -> None:
+    """Horizontal motion streaks and a gold trophy top-left; sparkles in front."""
+    if front:
+        for _ in range(9):
+            _sparkle(d, *_edge_xy(rng), rng.randint(10, 22), (255, 250, 210, 255))
+        return
+    for _ in range(40):
+        y, x, ln = rng.randint(0, S - 360), rng.randint(-200, S), rng.randint(120, 420)
+        d.line([(x, y), (x + ln, y)], fill=(255, 255, 255, rng.randint(40, 110)), width=rng.randint(4, 12))
+    t = Image.new("RGBA", (280, 320))
+    td = ImageDraw.Draw(t)
+    ol = dict(fill=GOLD, outline=GOLD_DARK, width=6)
+    td.arc([10, 40, 100, 150], 90, 270, fill=GOLD_DARK, width=16)    # handles
+    td.arc([180, 40, 270, 150], 270, 90, fill=GOLD_DARK, width=16)
+    td.arc([14, 44, 96, 146], 90, 270, fill=GOLD, width=8)
+    td.arc([184, 44, 266, 146], 270, 90, fill=GOLD, width=8)
+    td.chord([50, -90, 230, 200], 0, 180, **ol)                      # cup
+    td.rectangle([122, 196, 158, 250], **ol)                          # stem
+    td.rectangle([80, 248, 200, 300], **ol)                           # base
+    _sparkle(td, 110, 60, 22, (255, 255, 230, 255))
+    _paste_rotated(layer, t, 10, 120, 150)
+
+
+def _alert(d, layer, rng, front) -> None:
+    """Yellow-black caution tape across the top corners and warning signs in the margins."""
+    tape = Image.new("RGBA", (1100, 70), (255, 214, 0, 255))
+    kd = ImageDraw.Draw(tape)
+    for x in range(-70, 1100, 70):
+        kd.polygon([(x, 70), (x + 35, 70), (x + 70, 0), (x + 35, 0)], fill=(20, 20, 20, 255))
+    kd.rectangle([0, 0, 1099, 69], outline=(20, 20, 20, 255), width=4)
+    if front:  # tape over the print's top-left corner
+        _paste_rotated(layer, tape, 38, 90, 110)
+        return
+    _paste_rotated(layer, tape, -38, S - 60, 90)
+    f = ImageFont.truetype(FONT, 58)
+    for _ in range(6):
+        x, y = rng.randint(0, S), rng.randint(0, S - 380)
+        r = rng.randint(36, 56)
+        pts = [(x, y - r), (x + r * 1.1, y + r * 0.8), (x - r * 1.1, y + r * 0.8)]
+        d.polygon(pts, fill=(255, 214, 0, 255), outline=(20, 20, 20, 255), width=6)
+        d.text((x, y + r * 0.2), "!", font=f.font_variant(size=int(r * 1.1)), fill=(20, 20, 20, 255), anchor="mm")
+
+
+def _emoji_sprite(ch: str, size: int) -> Image.Image | None:
+    """One colour emoji with a white sticker outline, or None when it can't be drawn."""
+    try:
+        f = ImageFont.truetype(EMOJI_FONT, 109)  # Noto's bitmap strike: only size 109 renders
+    except OSError:
+        print("[POSTER] no colour emoji font -> emoji skipped")
+        return None
+    im = Image.new("RGBA", (180, 160))
+    ImageDraw.Draw(im).text((10, 10), ch, font=f, embedded_color=True)
+    box = im.getbbox()
+    if box is None:
+        return None
+    im = im.crop(box)
+    im = im.resize((size, round(im.height * size / im.width)), Image.LANCZOS)
+    pad = Image.new("RGBA", (im.width + 20, im.height + 20))
+    pad.alpha_composite(im, (10, 10))
+    white = Image.new("RGBA", pad.size, "white")
+    white.putalpha(pad.getchannel("A").filter(ImageFilter.MaxFilter(9)))
+    white.alpha_composite(pad)
+    return white
+
+
+def _stickers(img: Image.Image, emoji: list[str], rng: random.Random, front: bool) -> None:
+    """The story's emoji scattered as tilted stickers: many behind the print, a few big in the margins."""
+    sprites = [s for s in (_emoji_sprite(e, 120) for e in emoji) if s is not None]
+    if not sprites:
+        return
+    for i in range(4 if front else 6):
+        sp = sprites[i % len(sprites)]
+        k = rng.uniform(0.8, 1.1) if front else rng.uniform(0.5, 0.9)
+        sp = sp.resize((round(sp.width * k), round(sp.height * k)), Image.LANCZOS)
+        sp = sp.rotate(rng.uniform(-25, 25), resample=Image.BICUBIC, expand=True)
+        x, y = _edge_xy(rng)  # margins only: the popped-out heads own the top middle
+        img.alpha_composite(sp, (max(0, min(S - sp.width, x - sp.width // 2)), max(0, y - sp.height // 2)))
 
 
 def _text(img: Image.Image, lines: list[str], credit: str, sensitive: bool = False) -> None:
@@ -251,12 +405,13 @@ def _text(img: Image.Image, lines: list[str], credit: str, sensitive: bool = Fal
 def render(photo: Image.Image, lines: list[str], credit: str, out_path: str,
            person: Image.Image | None = None, background: Image.Image | None = None,
            sensitive: bool = False, pop: Image.Image | None = None, fx: str = "none",
-           tag: str = "ข่าวด่วน") -> str:
+           tag: str = "ข่าวด่วน", emoji: list[str] | None = None, tone: tuple | None = None) -> str:
     """portrait layout when both person and background are given, scene layout otherwise.
-    Scene: pop = people() mask of photo (they break out of the print), fx = FX_TONE key, tag = stamp word.
+    Scene: pop = people() mask of photo (they break out of the print), fx = FX_TONE key, tag = stamp word;
+    fx "none": emoji stickers and tone ((dark rgb), (light rgb)) for the backdrop.
     sensitive (death, child victim, sexual crime, disaster): muted style, natural-colour photo."""
     img = (_portrait(person, background) if person is not None and background is not None
-           else _scene(photo, sensitive, pop, fx, tag))
+           else _scene(photo, sensitive, pop, fx, tag, emoji, tone))
     _text(img, lines, credit, sensitive)
     img.save(out_path, "JPEG", quality=90)
     return out_path

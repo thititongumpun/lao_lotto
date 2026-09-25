@@ -55,7 +55,7 @@ SYSTEM = (
 
 POSTER_SYSTEM = (
     "You design a square Facebook news poster from a news photo and its Thai story. "
-    "Answer JSON only with keys layout, has_text, sensitive, people, bg_subject, fx, tag, l1, l2, l3. "
+    "Answer JSON only with keys layout, has_text, sensitive, people, bg_subject, fx, emoji, tone, tag, l1, l2, l3. "
     'layout: "portrait" when ONE main person fills a large part of the photo and could be cut out cleanly '
     '(headshot, press photo, studio shot); "scene" for anything else (places, accidents, crowds, '
     "several people, objects, blurred faces, screenshots). "
@@ -72,7 +72,14 @@ POSTER_SYSTEM = (
     "false for objects, vehicles, machines, buildings, places, animals or tiny distant figures. "
     'fx: the cartoon effect that fits the story best: "rain" (rain, flood, weather), "storm" (storms, '
     'shocking or angry news, scandal, clash), "fire" (fire, heat, heated conflict, crime), "money" (economy, '
-    'prices, lottery, winnings, business), "party" (celebration, win, wedding, happy viral), "none" otherwise. '
+    'prices, lottery, winnings, business), "party" (celebration, win, wedding, happy viral), "justice" (court, '
+    'lawsuit, verdict, petition, legal fight), "police" (arrest, police raid, manhunt, crime scene), "sport" '
+    '(sport, match, athlete, competition), "alert" (scam, warning, fraud, danger notice, recall), "none" when '
+    'none of these fit. '
+    "emoji: when fx is \"none\", 1-3 emoji naming the story's key things (e.g. elephant story -> [\"🐘\"], "
+    "temple dispute -> [\"🛕\", \"📜\"]); [] otherwise. "
+    "tone: when fx is \"none\", two hex colours [dark, light] for the backdrop that suit the story's mood "
+    "(dark nearly black, light vivid); [] otherwise. "
     "tag: a Thai stamp word for the story, max 10 chars (e.g. ข่าวด่วน, เตือนภัย!, ช็อก!, ดราม่า, ถูกหวย!). "
     "l1, l2, l3: Thai headline in three lines, facts only from the story, no source name, no emoji. "
     "l1 = what happened (max 24 chars), l2 = the key name or keyword (max 14 chars), "
@@ -89,6 +96,7 @@ OG_IMAGE_RE = re.compile(
     r'|<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']og:image["\']'
 )
 NO_POSTER = {"sanook.com"}
+HEX_RE = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_POSTER_TRIES = 5  # stories checked for a usable photo before falling back to a text post
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
@@ -193,7 +201,7 @@ def build_hot_message(story: dict) -> str:
 
 
 def validate_poster_plan(plan: dict) -> dict:
-    """Gemini's poster JSON -> {layout, has_text, sensitive, people, bg_prompt, fx, tag, lines[3]}; rejects missing or empty lines."""
+    """Gemini's poster JSON -> {layout, has_text, sensitive, people, bg_prompt, fx, tag, emoji, tone, lines[3]}; rejects missing or empty lines."""
     lines = [str(plan.get(k) or "").strip() for k in ("l1", "l2", "l3")]
     if not all(lines):
         raise RuntimeError(f"poster plan missing headline lines: {plan!r}")
@@ -205,7 +213,22 @@ def validate_poster_plan(plan: dict) -> dict:
             "people": plan.get("people") is True,  # fail safe: a string "true" still blocks the AI background
             "bg_prompt": f"{subject}, {BG_STYLE}" if subject else "", "lines": lines,
             "fx": plan.get("fx") if plan.get("fx") in poster.FX_TONE else "none",
-            "tag": tag if 0 < len(tag) <= 12 else "ข่าวด่วน"}
+            "tag": tag if 0 < len(tag) <= 12 else "ข่าวด่วน",
+            "emoji": [e.strip() for e in (plan.get("emoji") if isinstance(plan.get("emoji"), list) else [])
+                      if isinstance(e, str) and 0 < len(e.strip()) <= 8 and not any(c.isalnum() for c in e)][:3],
+            "tone": _tone(plan.get("tone"))}
+
+
+def _tone(value) -> tuple | None:
+    """["#rrggbb" dark, "#rrggbb" light] -> ((r, g, b), (r, g, b)) darker first, or None (bad or grey)."""
+    if not (isinstance(value, list) and len(value) == 2
+            and all(isinstance(v, str) and HEX_RE.fullmatch(v.strip()) for v in value)):
+        return None
+    rgb = sorted((tuple(int(v.strip()[i:i + 2], 16) for i in (1, 3, 5)) for v in value), key=sum)
+    light = rgb[1]
+    if max(light) - min(light) < 80:  # greyish "vivid" colour -> dull poster; use the default tone
+        return None
+    return tuple(rgb)
 
 
 def build_poster(story: dict, out_path: str) -> str | None:
@@ -243,7 +266,8 @@ def build_poster(story: dict, out_path: str) -> str | None:
         # pop-out only for real people: rembg also "finds" people in machines and buildings
         pop = poster.people(photo) if background is None and plan["people"] and not plan["sensitive"] else None
         return poster.render(photo, plan["lines"], f"ภาพ: {credit}", out_path, person, background,
-                             sensitive=plan["sensitive"], pop=pop, fx=plan["fx"], tag=plan["tag"])
+                             sensitive=plan["sensitive"], pop=pop, fx=plan["fx"], tag=plan["tag"],
+                             emoji=plan["emoji"], tone=plan["tone"])
     except Exception as exc:
         print(f"[NEWS] poster skipped: {exc}")
         return None

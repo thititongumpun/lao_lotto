@@ -59,6 +59,12 @@ def test_poster_plan():
     assert odd["fx"] == "none" and odd["tag"] == "ข่าวด่วน", odd
     ok = validate_poster_plan({"fx": "rain", "tag": " เตือนภัย! ", "l1": "a", "l2": "b", "l3": "c"})
     assert ok["fx"] == "rain" and ok["tag"] == "เตือนภัย!", ok
+    em = validate_poster_plan({"fx": "none", "emoji": ["🐘", "abc", 5, "🛕", "📜", "⚖️"],
+                               "tone": ["#E0FF40", "#001010"], "l1": "a", "l2": "b", "l3": "c"})
+    assert em["emoji"] == ["🐘", "🛕", "📜"], em  # letters/non-strings dropped, max 3
+    assert em["tone"] == ((0, 16, 16), (224, 255, 64)), em  # darker colour first
+    assert validate_poster_plan({"tone": ["red", "#000000"], "l1": "a", "l2": "b", "l3": "c"})["tone"] is None
+    assert validate_poster_plan({"tone": ["#000000", "#808080"], "l1": "a", "l2": "b", "l3": "c"})["tone"] is None
     assert validate_poster_plan({"has_text": "yes", "l1": "a", "l2": "b", "l3": "c"})["has_text"] is False
     assert validate_poster_plan({"sensitive": "yes", "l1": "a", "l2": "b", "l3": "c"})["sensitive"] is False
     assert validate_poster_plan({"sensitive": True, "l1": "a", "l2": "b", "l3": "c"})["sensitive"] is True
@@ -90,6 +96,10 @@ def test_render_both_layouts():
         out = f"/tmp/t_scene_{fx}.jpg"
         poster.render(photo, lines, "ภาพ: ข่าวสด", out, pop=pop, fx=fx, tag="เตือนภัย!")
         assert Image.open(out).size == (1080, 1080), out
+    poster.render(photo, lines, "ภาพ: ข่าวสด", "/tmp/t_scene_emoji.jpg", fx="none", emoji=["🐘", "⚖️"],
+                  tone=((0, 20, 10), (60, 200, 120)))
+    plain = Image.open("/tmp/t_scene_none.jpg").tobytes()
+    assert Image.open("/tmp/t_scene_emoji.jpg").tobytes() != plain, "emoji/tone should change the poster"
 
 
 if __name__ == "__main__":
