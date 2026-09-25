@@ -52,6 +52,11 @@ def test_poster_plan():
     assert plan["layout"] == "scene" and plan["has_text"] is False and plan["lines"] == ["a", "b", "c"], plan
     assert plan["bg_prompt"].startswith("court, ") and "no text" in plan["bg_prompt"], plan
     assert plan["sensitive"] is False, plan
+    assert plan["fx"] == "none" and plan["tag"] == "ข่าวด่วน", plan  # missing -> defaults
+    odd = validate_poster_plan({"fx": "lava", "tag": "ยาวมากเกินไปสำหรับตราประทับ", "l1": "a", "l2": "b", "l3": "c"})
+    assert odd["fx"] == "none" and odd["tag"] == "ข่าวด่วน", odd
+    ok = validate_poster_plan({"fx": "rain", "tag": " เตือนภัย! ", "l1": "a", "l2": "b", "l3": "c"})
+    assert ok["fx"] == "rain" and ok["tag"] == "เตือนภัย!", ok
     assert validate_poster_plan({"has_text": "yes", "l1": "a", "l2": "b", "l3": "c"})["has_text"] is False
     assert validate_poster_plan({"sensitive": "yes", "l1": "a", "l2": "b", "l3": "c"})["sensitive"] is False
     assert validate_poster_plan({"sensitive": True, "l1": "a", "l2": "b", "l3": "c"})["sensitive"] is True
@@ -76,6 +81,13 @@ def test_render_both_layouts():
     normal = Image.open("/tmp/t_scene.jpg").tobytes()
     muted = Image.open("/tmp/t_scene_muted.jpg").tobytes()
     assert normal != muted, "sensitive style should differ from the normal scene poster"
+
+    pop = Image.new("RGBA", photo.size)  # a fake person mask in the middle: pops out above the print
+    pop.paste((255, 255, 255, 255), (450, 120, 750, 675))
+    for fx in poster.FX_TONE:
+        out = f"/tmp/t_scene_{fx}.jpg"
+        poster.render(photo, lines, "ภาพ: ข่าวสด", out, pop=pop, fx=fx, tag="เตือนภัย!")
+        assert Image.open(out).size == (1080, 1080), out
 
 
 if __name__ == "__main__":

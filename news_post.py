@@ -26,6 +26,7 @@ import requests
 from dotenv import load_dotenv
 
 from horoscope import BANGKOK, thai_date
+import poster
 from pipeline import RESULT_SENTINEL
 
 load_dotenv()
@@ -54,7 +55,7 @@ SYSTEM = (
 
 POSTER_SYSTEM = (
     "You design a square Facebook news poster from a news photo and its Thai story. "
-    "Answer JSON only with keys layout, has_text, sensitive, bg_subject, l1, l2, l3. "
+    "Answer JSON only with keys layout, has_text, sensitive, bg_subject, fx, tag, l1, l2, l3. "
     'layout: "portrait" when ONE main person fills a large part of the photo and could be cut out cleanly '
     '(headshot, press photo, studio shot); "scene" for anything else (places, accidents, crowds, '
     "several people, objects, blurred faces, screenshots). "
@@ -67,6 +68,10 @@ POSTER_SYSTEM = (
     '(e.g. "towering Thai Supreme Court facade under a stormy sky split by lightning, a giant golden judge '
     'gavel slamming down on the left with sparks and shattering marble, scattered ballot papers swirling in the wind"), '
     "no people. "
+    'fx: the cartoon effect that fits the story best: "rain" (rain, flood, weather), "storm" (storms, '
+    'shocking or angry news, scandal, clash), "fire" (fire, heat, heated conflict, crime), "money" (economy, '
+    'prices, lottery, winnings, business), "party" (celebration, win, wedding, happy viral), "none" otherwise. '
+    "tag: a Thai stamp word for the story, max 10 chars (e.g. ข่าวด่วน, เตือนภัย!, ช็อก!, ดราม่า, ถูกหวย!). "
     "l1, l2, l3: Thai headline in three lines, facts only from the story, no source name, no emoji. "
     "l1 = what happened (max 24 chars), l2 = the key name or keyword (max 14 chars), "
     "l3 = one supporting detail (max 30 chars)."
@@ -186,15 +191,18 @@ def build_hot_message(story: dict) -> str:
 
 
 def validate_poster_plan(plan: dict) -> dict:
-    """Gemini's poster JSON -> {layout, has_text, sensitive, bg_prompt, lines[3]}; rejects missing or empty lines."""
+    """Gemini's poster JSON -> {layout, has_text, sensitive, bg_prompt, fx, tag, lines[3]}; rejects missing or empty lines."""
     lines = [str(plan.get(k) or "").strip() for k in ("l1", "l2", "l3")]
     if not all(lines):
         raise RuntimeError(f"poster plan missing headline lines: {plan!r}")
     layout = plan.get("layout") if plan.get("layout") in ("portrait", "scene") else "scene"
     subject = str(plan.get("bg_subject") or "").strip()
+    tag = str(plan.get("tag") or "").strip()
     return {"layout": layout, "has_text": plan.get("has_text") is True,
             "sensitive": plan.get("sensitive") in (True, "true"),  # fail safe: a string "true" still blocks the AI background
-            "bg_prompt": f"{subject}, {BG_STYLE}" if subject else "", "lines": lines}
+            "bg_prompt": f"{subject}, {BG_STYLE}" if subject else "", "lines": lines,
+            "fx": plan.get("fx") if plan.get("fx") in poster.FX_TONE else "none",
+            "tag": tag if 0 < len(tag) <= 12 else "ข่าวด่วน"}
 
 
 def build_poster(story: dict, out_path: str) -> str | None:
@@ -204,7 +212,6 @@ def build_poster(story: dict, out_path: str) -> str | None:
 
         from PIL import Image
 
-        import poster
         from gen_predict import call_gemini_json
 
         photo_bytes, credit = fetch_source_photo(story)
@@ -230,8 +237,9 @@ def build_poster(story: dict, out_path: str) -> str | None:
         if background is None and plan["has_text"]:  # scene layout would print our headline over theirs
             print("[NEWS] source photo already has headline text -> text-only post")
             return None
+        pop = poster.people(photo) if background is None and not plan["sensitive"] else None
         return poster.render(photo, plan["lines"], f"ภาพ: {credit}", out_path, person, background,
-                             sensitive=plan["sensitive"])
+                             sensitive=plan["sensitive"], pop=pop, fx=plan["fx"], tag=plan["tag"])
     except Exception as exc:
         print(f"[NEWS] poster skipped: {exc}")
         return None
