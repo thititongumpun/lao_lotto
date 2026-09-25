@@ -52,7 +52,9 @@ def test_poster_plan():
     assert plan["layout"] == "scene" and plan["has_text"] is False and plan["lines"] == ["a", "b", "c"], plan
     assert plan["bg_prompt"].startswith("court, ") and "no text" in plan["bg_prompt"], plan
     assert plan["sensitive"] is False, plan
-    assert plan["fx"] == "none" and plan["tag"] == "ข่าวด่วน", plan  # missing -> defaults
+    assert plan["fx"] == "none" and plan["tag"] == "ข่าวด่วน" and plan["people"] is False, plan  # missing -> defaults
+    assert validate_poster_plan({"people": "yes", "l1": "a", "l2": "b", "l3": "c"})["people"] is False
+    assert validate_poster_plan({"people": True, "l1": "a", "l2": "b", "l3": "c"})["people"] is True
     odd = validate_poster_plan({"fx": "lava", "tag": "ยาวมากเกินไปสำหรับตราประทับ", "l1": "a", "l2": "b", "l3": "c"})
     assert odd["fx"] == "none" and odd["tag"] == "ข่าวด่วน", odd
     ok = validate_poster_plan({"fx": "rain", "tag": " เตือนภัย! ", "l1": "a", "l2": "b", "l3": "c"})

@@ -55,7 +55,7 @@ SYSTEM = (
 
 POSTER_SYSTEM = (
     "You design a square Facebook news poster from a news photo and its Thai story. "
-    "Answer JSON only with keys layout, has_text, sensitive, bg_subject, fx, tag, l1, l2, l3. "
+    "Answer JSON only with keys layout, has_text, sensitive, people, bg_subject, fx, tag, l1, l2, l3. "
     'layout: "portrait" when ONE main person fills a large part of the photo and could be cut out cleanly '
     '(headshot, press photo, studio shot); "scene" for anything else (places, accidents, crowds, '
     "several people, objects, blurred faces, screenshots). "
@@ -68,6 +68,8 @@ POSTER_SYSTEM = (
     '(e.g. "towering Thai Supreme Court facade under a stormy sky split by lightning, a giant golden judge '
     'gavel slamming down on the left with sparks and shattering marble, scattered ballot papers swirling in the wind"), '
     "no people. "
+    "people: true only when real people (faces clearly visible) are the main subject of the photo; "
+    "false for objects, vehicles, machines, buildings, places, animals or tiny distant figures. "
     'fx: the cartoon effect that fits the story best: "rain" (rain, flood, weather), "storm" (storms, '
     'shocking or angry news, scandal, clash), "fire" (fire, heat, heated conflict, crime), "money" (economy, '
     'prices, lottery, winnings, business), "party" (celebration, win, wedding, happy viral), "none" otherwise. '
@@ -191,7 +193,7 @@ def build_hot_message(story: dict) -> str:
 
 
 def validate_poster_plan(plan: dict) -> dict:
-    """Gemini's poster JSON -> {layout, has_text, sensitive, bg_prompt, fx, tag, lines[3]}; rejects missing or empty lines."""
+    """Gemini's poster JSON -> {layout, has_text, sensitive, people, bg_prompt, fx, tag, lines[3]}; rejects missing or empty lines."""
     lines = [str(plan.get(k) or "").strip() for k in ("l1", "l2", "l3")]
     if not all(lines):
         raise RuntimeError(f"poster plan missing headline lines: {plan!r}")
@@ -199,7 +201,8 @@ def validate_poster_plan(plan: dict) -> dict:
     subject = str(plan.get("bg_subject") or "").strip()
     tag = str(plan.get("tag") or "").strip()
     return {"layout": layout, "has_text": plan.get("has_text") is True,
-            "sensitive": plan.get("sensitive") in (True, "true"),  # fail safe: a string "true" still blocks the AI background
+            "sensitive": plan.get("sensitive") in (True, "true"),
+            "people": plan.get("people") is True,  # fail safe: a string "true" still blocks the AI background
             "bg_prompt": f"{subject}, {BG_STYLE}" if subject else "", "lines": lines,
             "fx": plan.get("fx") if plan.get("fx") in poster.FX_TONE else "none",
             "tag": tag if 0 < len(tag) <= 12 else "ข่าวด่วน"}
@@ -237,7 +240,8 @@ def build_poster(story: dict, out_path: str) -> str | None:
         if background is None and plan["has_text"]:  # scene layout would print our headline over theirs
             print("[NEWS] source photo already has headline text -> text-only post")
             return None
-        pop = poster.people(photo) if background is None and not plan["sensitive"] else None
+        # pop-out only for real people: rembg also "finds" people in machines and buildings
+        pop = poster.people(photo) if background is None and plan["people"] and not plan["sensitive"] else None
         return poster.render(photo, plan["lines"], f"ภาพ: {credit}", out_path, person, background,
                              sensitive=plan["sensitive"], pop=pop, fx=plan["fx"], tag=plan["tag"])
     except Exception as exc:
