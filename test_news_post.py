@@ -111,8 +111,12 @@ def test_reel_cover():
     crop_cover(small.getvalue(), "/tmp/_cover_test.jpg"); assert Image.open("/tmp/_cover_test.jpg").size == (720, 900)
     wide = io.BytesIO(); Image.new("RGB", (1080, 1080)).save(wide, "JPEG")  # a square frame is not our cover
     assert crop_cover(wide.getvalue(), "/tmp/_cover_test.jpg") is None
-    # reels published before the cover existed never hit the network and keep the generated poster
-    assert reel_cover({"id": "1", "publishedAt": "2026-09-27T13:53:53.737Z"}, "/tmp/x.jpg") is None
+    # poster file from n8n -> cropped photo post; no file -> None (old generated poster)
+    import news_post, tempfile, os
+    d = tempfile.mkdtemp(); news_post.COVER_DIR = d
+    with open(os.path.join(d, "123.jpg"), "wb") as f: f.write(buf.getvalue())
+    assert reel_cover({"id": "123"}, "/tmp/_rc.jpg") == "/tmp/_rc.jpg" and Image.open("/tmp/_rc.jpg").size == (1080, 1350)
+    assert reel_cover({"id": "456"}, "/tmp/_rc.jpg") is None
 
 
 if __name__ == "__main__":

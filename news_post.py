@@ -19,7 +19,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 
 import psycopg2
 import requests
@@ -98,9 +98,9 @@ OG_IMAGE_RE = re.compile(
 NO_POSTER = {"sanook.com"}
 HEX_RE = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_POSTER_TRIES = 5  # stories checked for a usable photo before falling back to a text post
-# n8n uploads a viral-style cover (assets/card/cover.html) as each reel's preferred thumbnail from this moment on;
-# reels before it have a plain video frame, so they keep the generated poster.
-COVER_SINCE = datetime(2026, 9, 27, 16, 5, tzinfo=timezone.utc)
+# n8n saves each reel's full poster (assets/card/cover.html) as <reel video_id>.jpg here after publishing
+# (host /root/n8n/n8n_ffmpeg/covers, mounted read-only; kept 3 days). /api/hot story ids are those video ids.
+COVER_DIR = os.getenv("REEL_COVER_DIR", "/covers")
 COVER_CROP = (285, 1350)  # 1080x1920 cover -> 1080x1350 (4:5) post: top offset + height; the cover keeps its text there
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
@@ -251,26 +251,18 @@ def crop_cover(data: bytes, out_path: str) -> str | None:
 
 
 def reel_cover(story: dict, out_path: str) -> str | None:
-    """The reel's own cover as the photo post: /api/hot ids are Facebook reel ids and n8n sets the cover as the
-    preferred thumbnail. One Graph read, no Gemini or Workers AI. None -> caller builds the old poster."""
+    """The reel's own poster (rendered by n8n, no anchor) as the photo post, cropped to 4:5. A local file read:
+    no Gemini, no Workers AI, no Facebook call. None -> caller builds the old poster."""
+    path = os.path.join(COVER_DIR, f"{story['id']}.jpg")
     try:
-        published = datetime.fromisoformat(str(story.get("publishedAt", "")).replace("Z", "+00:00"))
-        if published < COVER_SINCE:
-            return None
-        from facebook import GRAPH_BASE, VERSION_MANAGE, _get_access_token
-        resp = requests.get(f"{GRAPH_BASE}/{VERSION_MANAGE}/{story['id']}", timeout=20,
-                            params={"fields": "thumbnails{uri,is_preferred}", "access_token": _get_access_token()})
-        resp.raise_for_status()
-        preferred = [t for t in resp.json().get("thumbnails", {}).get("data", []) if t.get("is_preferred")]
-        if not preferred:
-            return None
-        img = requests.get(preferred[0]["uri"], timeout=30)
-        img.raise_for_status()
-        path = crop_cover(img.content, out_path)
-        print(f"[NEWS] reel cover: {story['id']} -> {path}")
-        return path
+        with open(path, "rb") as f:
+            out = crop_cover(f.read(), out_path)
+        print(f"[NEWS] reel poster: {path} -> {out}")
+        return out
+    except FileNotFoundError:
+        return None
     except Exception as exc:
-        print(f"[NEWS] reel cover skipped: {exc}")
+        print(f"[NEWS] reel poster skipped: {exc}")
         return None
 
 
