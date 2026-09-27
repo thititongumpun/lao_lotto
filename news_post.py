@@ -19,7 +19,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 import psycopg2
 import requests
@@ -98,6 +98,10 @@ OG_IMAGE_RE = re.compile(
 NO_POSTER = {"sanook.com"}
 HEX_RE = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_POSTER_TRIES = 5  # stories checked for a usable photo before falling back to a text post
+# n8n uploads a viral-style cover (assets/card/cover.html) as each reel's preferred thumbnail from this moment on;
+# reels before it have a plain video frame, so they keep the generated poster.
+COVER_SINCE = datetime(2026, 9, 27, 16, 5, tzinfo=timezone.utc)
+COVER_CROP = (285, 1350)  # 1080x1920 cover -> 1080x1350 (4:5) post: top offset + height; the cover keeps its text there
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
 
@@ -231,6 +235,45 @@ def _tone(value) -> tuple | None:
     return tuple(rgb)
 
 
+def crop_cover(data: bytes, out_path: str) -> str | None:
+    """1080x1920 reel cover -> 4:5 photo post (scaled if Facebook serves a smaller copy). None if not 9:16."""
+    import io
+
+    from PIL import Image
+
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    if im.height < im.width * 1.7:
+        return None
+    k = im.width / 1080
+    top, h = round(COVER_CROP[0] * k), round(COVER_CROP[1] * k)
+    im.crop((0, top, im.width, top + h)).save(out_path, "JPEG", quality=92)
+    return out_path
+
+
+def reel_cover(story: dict, out_path: str) -> str | None:
+    """The reel's own cover as the photo post: /api/hot ids are Facebook reel ids and n8n sets the cover as the
+    preferred thumbnail. One Graph read, no Gemini or Workers AI. None -> caller builds the old poster."""
+    try:
+        published = datetime.fromisoformat(str(story.get("publishedAt", "")).replace("Z", "+00:00"))
+        if published < COVER_SINCE:
+            return None
+        from facebook import GRAPH_BASE, VERSION_MANAGE, _get_access_token
+        resp = requests.get(f"{GRAPH_BASE}/{VERSION_MANAGE}/{story['id']}", timeout=20,
+                            params={"fields": "thumbnails{uri,is_preferred}", "access_token": _get_access_token()})
+        resp.raise_for_status()
+        preferred = [t for t in resp.json().get("thumbnails", {}).get("data", []) if t.get("is_preferred")]
+        if not preferred:
+            return None
+        img = requests.get(preferred[0]["uri"], timeout=30)
+        img.raise_for_status()
+        path = crop_cover(img.content, out_path)
+        print(f"[NEWS] reel cover: {story['id']} -> {path}")
+        return path
+    except Exception as exc:
+        print(f"[NEWS] reel cover skipped: {exc}")
+        return None
+
+
 def build_poster(story: dict, out_path: str) -> str | None:
     """Photo poster for a hot story, or None (caller posts text only). Never raises."""
     try:
@@ -324,7 +367,7 @@ def run_hot(hours: int = 6, dry_run: bool = False) -> dict:
         story, image = candidates[0], None
         for s in candidates[:MAX_POSTER_TRIES]:
             print(f"[NEWS] hot candidate: {s['id']} {s['title']}")
-            poster_path = build_poster(s, f"/tmp/poster_{s['id']}.jpg")
+            poster_path = reel_cover(s, f"/tmp/poster_{s['id']}.jpg") or build_poster(s, f"/tmp/poster_{s['id']}.jpg")
             if poster_path:
                 story, image = s, poster_path
                 break

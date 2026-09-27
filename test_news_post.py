@@ -6,8 +6,8 @@ from datetime import date
 from PIL import Image
 
 import poster
-from news_post import (OG_IMAGE_RE, SOURCE_RE, build_digest_message, build_lotto_message,
-                       validate_hot, validate_poster_plan)
+from news_post import (OG_IMAGE_RE, SOURCE_RE, build_digest_message, build_lotto_message, crop_cover,
+                       reel_cover, validate_hot, validate_poster_plan)
 
 STORIES = [{"id": str(i), "title": f"ข่าวที่ {i}", "body": "x", "category": "viral"} for i in range(1, 8)]
 
@@ -102,6 +102,19 @@ def test_render_both_layouts():
     assert Image.open("/tmp/t_scene_emoji.jpg").tobytes() != plain, "emoji/tone should change the poster"
 
 
+def test_reel_cover():
+    import io
+    buf = io.BytesIO(); Image.new("RGB", (1080, 1920), "red").save(buf, "JPEG")
+    assert crop_cover(buf.getvalue(), "/tmp/_cover_test.jpg") == "/tmp/_cover_test.jpg"
+    assert Image.open("/tmp/_cover_test.jpg").size == (1080, 1350)
+    small = io.BytesIO(); Image.new("RGB", (720, 1280)).save(small, "JPEG")  # Facebook may serve a smaller copy
+    crop_cover(small.getvalue(), "/tmp/_cover_test.jpg"); assert Image.open("/tmp/_cover_test.jpg").size == (720, 900)
+    wide = io.BytesIO(); Image.new("RGB", (1080, 1080)).save(wide, "JPEG")  # a square frame is not our cover
+    assert crop_cover(wide.getvalue(), "/tmp/_cover_test.jpg") is None
+    # reels published before the cover existed never hit the network and keep the generated poster
+    assert reel_cover({"id": "1", "publishedAt": "2026-09-27T13:53:53.737Z"}, "/tmp/x.jpg") is None
+
+
 if __name__ == "__main__":
     test_digest()
     test_validate_hot()
@@ -109,4 +122,5 @@ if __name__ == "__main__":
     test_source_and_og()
     test_poster_plan()
     test_render_both_layouts()
+    test_reel_cover()
     print("ok")
