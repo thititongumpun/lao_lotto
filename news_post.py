@@ -1,16 +1,18 @@
 """
 News text posts for the Facebook page — news_post.py
 
-Three kinds of text-only posts (no URL in the body; the link goes in the first
+Five kinds of text-only posts (no URL in the body; the link goes in the first
 comment so Content Monetization keeps paying and the 2-free-link-posts/month
 cap on Meta One is never hit):
 
   hot     — one Gemini-rewritten story from /api/hot (dedupe per video id)
   digest  — 5 headlines, no LLM (dedupe per video id so two digests never repeat)
   lotto   — today's Lao lottery numbers from the lao_lottery table
+  pm25    — morning PM2.5 readings from Air4Thai, plus an optional affiliate comment
+  gold    — goldtraders.or.th announce prices, plus an optional affiliate comment
 
 Run as a SHORT-LIVED subprocess (same contract as pipeline.py / horoscope.py):
-    python -m news_post --kind hot|digest|lotto [--hours N] [--label TEXT] [--dry-run]
+    python -m news_post --kind hot|digest|lotto|pm25|gold [--hours N] [--label TEXT] [--dry-run]
 Last stdout line is RESULT_SENTINEL + json; everything else is logs.
 """
 
@@ -19,10 +21,11 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import date, datetime, timezone
 
 import psycopg2
 import requests
+import urllib3
 from dotenv import load_dotenv
 
 from horoscope import BANGKOK, thai_date
@@ -104,6 +107,19 @@ COVER_DIR = os.getenv("REEL_COVER_DIR", "/covers")
 COVER_CROP = (285, 1350)  # 1080x1920 cover -> 1080x1350 (4:5) post: top offset + height; the cover keeps its text there
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
+AIR4THAI_URL = "https://air4thai.pcd.go.th/services/getNewAQI_JSON.php"
+PM25_PROVINCES = ["กรุงเทพ", "เชียงใหม่", "ขอนแก่น", "ภูเก็ต"]
+PM25_DOT = {"1": "🔵", "2": "🟢", "3": "🟡", "4": "🟠", "5": "🔴"}  # Air4Thai color_id
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+GOLD_URL = "https://classic.goldtraders.or.th/"
+GOLD_RE = re.compile(r'id="DetailPlace_uc_goldprices1_lbl(\w+)">(.*?)</span>', re.S)
+GOLD_TIME_RE = re.compile(r"(\d\d)/(\d\d)/(\d{4}) เวลา (\d\d:\d\d) น\. \(ครั้งที่ (\d+)\)")
+
+NOCODB_URL = os.getenv("NOCODB_BASE_URL", "").rstrip("/")
+NOCODB_TOKEN = os.getenv("NOCODB_API_TOKEN", "")
+NOCODB_TABLE = os.getenv("NOCODB_TABLE_NAME", "")
+
 
 # ── Source ─────────────────────────────────────────────────────────────────────
 
@@ -133,6 +149,63 @@ def fetch_source_photo(story: dict) -> tuple[bytes, str]:
     resp.raise_for_status()
     print(f"[NEWS] photo: {m.group(0)} ({len(resp.content)} bytes)")
     return resp.content, PUBLISHERS[m.group(1)]
+
+
+def fetch_air4thai() -> list[dict]:
+    # ponytail: verify=False — air4thai.pcd.go.th serves a broken cert chain; public read-only data, nothing sent
+    resp = requests.get(AIR4THAI_URL, headers=UA, timeout=20, verify=False)
+    resp.raise_for_status()
+    return resp.json()["stations"]
+
+
+def pick_pm25(stations: list[dict], today: str) -> list[tuple[str, float, str]]:
+    out = []
+    for province in PM25_PROVINCES:
+        best = None
+        for st in stations:
+            try:
+                if province not in st["areaTH"]:
+                    continue
+                last = st["AQILast"]
+                if last["date"] != today:
+                    continue
+                value = float(last["PM25"]["value"])
+                if value < 0:
+                    continue
+            except (KeyError, TypeError, ValueError):
+                continue
+            if best is None or value > best[0]:
+                best = (value, last["PM25"]["color_id"])
+        if best is not None:
+            out.append((province, best[0], best[1]))
+    return out
+
+
+def fetch_gold() -> str:
+    resp = requests.get(GOLD_URL, headers=UA, timeout=20)
+    resp.raise_for_status()
+    return resp.text
+
+
+def parse_gold(html: str) -> dict:
+    fields = {m.group(1): re.sub(r"<[^>]+>", "", m.group(2)).strip() for m in GOLD_RE.finditer(html)}
+    for name in ("BLSell", "BLBuy", "OMSell", "OMBuy", "AsTime"):
+        if name not in fields:
+            raise RuntimeError(f"goldtraders: missing {name}")
+    m = GOLD_TIME_RE.match(fields["AsTime"])
+    if not m:
+        raise RuntimeError("goldtraders: unrecognised announce time")
+    day, month, year, time_str, round_no = m.groups()
+    def price(name):
+        s = fields[name].strip().removesuffix(".00")
+        float(s.replace(",", ""))  # numeric check; ValueError propagates on a schema change
+        return s
+    return {
+        "bl_sell": price("BLSell"), "bl_buy": price("BLBuy"),
+        "om_sell": price("OMSell"), "om_buy": price("OMBuy"),
+        "date": date(int(year) - 543, int(month), int(day)),
+        "time": time_str, "round": int(round_no),
+    }
 
 
 # ── Dedupe table ───────────────────────────────────────────────────────────────
@@ -329,6 +402,71 @@ def build_lotto_message(row: dict) -> str:
     ])
 
 
+def build_pm25_message(readings: list[tuple[str, float, str]], today: date) -> str:
+    line = " | ".join(f"{p} {round(v)} {PM25_DOT.get(c, '⚪')}" for p, v, c in readings)
+    return "\n".join([
+        f"🌫️ ค่าฝุ่น PM2.5 เช้านี้ {thai_date(today)}",
+        line,
+        "เปิดหน้าต่างได้ไหมวันนี้ 😷",
+        "#ฝุ่น #PM25",
+    ])
+
+
+def build_gold_message(g: dict) -> str:
+    return "\n".join([
+        f"🪙 ราคาทองวันนี้ {thai_date(g['date'])} (ประกาศครั้งที่ {g['round']} เวลา {g['time']})",
+        f"ทองแท่ง ขายออก {g['bl_sell']} | รับซื้อ {g['bl_buy']}",
+        f"รูปพรรณ ขายออก {g['om_sell']} | รับซื้อ {g['om_buy']}",
+        "ราคานี้ซื้อหรือขาย?",
+        "#ราคาทอง #ทองวันนี้",
+    ])
+
+
+# ── Affiliate ──────────────────────────────────────────────────────────────────
+
+def unescape_title(t: str) -> str:
+    """NocoDB stores the comment's newlines as literal backslash-n; turn them back into real newlines."""
+    return t.replace("\\n", "\n").strip()
+
+
+def affiliate_comment(tag: str) -> str | None:
+    """Least-recently-used active NocoDB affiliate row tagged `tag`, as comment text. None = nothing to post."""
+    if not (NOCODB_URL and NOCODB_TOKEN and NOCODB_TABLE):
+        return None
+    try:
+        h = {"xc-token": NOCODB_TOKEN}
+        url = f"{NOCODB_URL}/api/v2/tables/{NOCODB_TABLE}/records"
+        r = requests.get(url, headers=h, timeout=15,
+                         params={"where": f"(tag,eq,{tag})~and(active,eq,true)", "limit": 50})
+        r.raise_for_status()
+        rows = r.json().get("list") or []
+        if not rows:
+            print(f"[NEWS] affiliate: no active row tagged {tag}")
+            return None
+        # ponytail: LRU picked client-side over ≤50 rows; move to a server sort if the tag list grows
+        row = min(rows, key=lambda r: r.get("last_used_at") or "")
+        requests.patch(url, headers=h, timeout=15,
+                       json=[{"Id": row["Id"], "last_used_at": datetime.now(timezone.utc).isoformat()}]).raise_for_status()
+        return unescape_title(row["title"])
+    except Exception as exc:  # an affiliate hiccup never blocks the news post
+        print(f"[NEWS] affiliate skipped: {exc}")
+        return None
+
+
+def post_affiliate(post_id: str, tag: str) -> bool:
+    """Second comment with a NocoDB affiliate product; never raises — the news post is already live."""
+    c = affiliate_comment(tag)
+    if not c:
+        return False
+    try:
+        from facebook import post_comment
+        post_comment(post_id, c)
+        return True
+    except Exception as exc:
+        print(f"[NEWS] affiliate comment failed: {exc}")
+        return False
+
+
 # ── Post ───────────────────────────────────────────────────────────────────────
 
 def _publish(message: str, comment: str, image_path: str | None = None) -> str:
@@ -434,9 +572,55 @@ def run_lotto(dry_run: bool = False) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
+def run_pm25(dry_run: bool = False) -> dict:
+    try:
+        ensure_table()
+        today = datetime.now(BANGKOK).date()
+        key = today.isoformat()
+        if already_posted(key, "pm25"):
+            return {"status": "skipped", "reason": "already_posted", "date": key}
+        readings = pick_pm25(fetch_air4thai(), key)
+        if not readings:
+            raise RuntimeError("air4thai: no fresh reading for today")
+        message = build_pm25_message(readings, today)
+        print(message)
+        if dry_run:
+            # ponytail: dry-run still rotates last_used_at; fine for a test knob
+            return {"status": "dry_run", "video_id": key, "message": message, "affiliate": affiliate_comment("pm25")}
+        post_id = _publish(message, "ดูค่าฝุ่นทุกสถานี 👉 https://air4thai.pcd.go.th")
+        mark_posted(key, "pm25", post_id)
+        return {"status": "ok", "video_id": key, "post_id": post_id, "affiliate": post_affiliate(post_id, "pm25")}
+    except Exception as exc:
+        print(f"[NEWS] pm25 error: {exc}")
+        return {"status": "error", "error": str(exc)}
+
+
+def run_gold(dry_run: bool = False) -> dict:
+    try:
+        ensure_table()
+        g = parse_gold(fetch_gold())
+        key = f"{g['date'].isoformat()}-{g['round']}"
+        if g["date"] != datetime.now(BANGKOK).date():
+            print(f"[NEWS] gold: announce date {key} is not today")
+            return {"status": "skipped", "reason": "not_today", "date": key}
+        if already_posted(key, "gold"):
+            return {"status": "skipped", "reason": "already_posted", "date": key}
+        message = build_gold_message(g)
+        print(message)
+        if dry_run:
+            # ponytail: dry-run still rotates last_used_at; fine for a test knob
+            return {"status": "dry_run", "video_id": key, "message": message, "affiliate": affiliate_comment("gold")}
+        post_id = _publish(message, "ราคาทองสมาคมค้าทองคำ 👉 https://www.goldtraders.or.th")
+        mark_posted(key, "gold", post_id)
+        return {"status": "ok", "video_id": key, "post_id": post_id, "affiliate": post_affiliate(post_id, "gold")}
+    except Exception as exc:
+        print(f"[NEWS] gold error: {exc}")
+        return {"status": "error", "error": str(exc)}
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", choices=["hot", "digest", "lotto"], required=True)
+    ap.add_argument("--kind", choices=["hot", "digest", "lotto", "pm25", "gold"], required=True)
     ap.add_argument("--hours", type=int, default=None)
     ap.add_argument("--label", default="สรุปข่าวเช้า")
     ap.add_argument("--dry-run", action="store_true")
@@ -445,6 +629,10 @@ if __name__ == "__main__":
         res = run_hot(a.hours or 6, a.dry_run)
     elif a.kind == "digest":
         res = run_digest(a.hours or 12, a.label, a.dry_run)
+    elif a.kind == "pm25":
+        res = run_pm25(a.dry_run)
+    elif a.kind == "gold":
+        res = run_gold(a.dry_run)
     else:
         res = run_lotto(a.dry_run)
     res["ran_at"] = datetime.now().isoformat()

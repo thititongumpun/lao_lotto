@@ -182,6 +182,14 @@ async def _scheduled_news_lotto() -> None:
     await _scheduled_news("lotto")
 
 
+async def _scheduled_news_pm25() -> None:
+    await _scheduled_news("pm25")
+
+
+async def _scheduled_news_gold() -> None:
+    await _scheduled_news("gold")
+
+
 def register_jobs(scheduler) -> None:
     """Add content pipeline + horoscope cron jobs to an existing APScheduler instance."""
     scheduler.add_job(
@@ -202,6 +210,9 @@ def register_jobs(scheduler) -> None:
         ("news_digest_am", _scheduled_news_digest_morning, {"hour": 7, "minute": 0}),
         ("news_digest_pm", _scheduled_news_digest_evening, {"hour": 19, "minute": 0}),
         ("news_lotto",     _scheduled_news_lotto,          {"hour": 22, "minute": 15, "day_of_week": "mon,wed,fri"}),
+        ("news_pm25",      _scheduled_news_pm25,           {"hour": 7, "minute": 5}),
+        ("news_gold_am",   _scheduled_news_gold,           {"hour": 9, "minute": 30}),
+        ("news_gold_pm",   _scheduled_news_gold,           {"hour": 15, "minute": 0}),
     ]
     # Deploy-safe: the scheduler posts to the real Page, so the news jobs stay
     # off until NEWS_POSTS_ENABLED=1 — dry-run the /content/news/* endpoints first.
@@ -286,6 +297,24 @@ async def trigger_news_lotto(
 ):
     """Post lottery-related news after the evening scrape."""
     return await _news_endpoint("lotto", dry_run)
+
+
+@router.post("/news/pm25")
+async def trigger_news_pm25(
+    dry_run: bool = False,
+    _: None = Depends(require_auth),
+):
+    """Post this morning's PM2.5 for 4 provinces (Air4Thai) as a text post."""
+    return await _news_endpoint("pm25", dry_run)
+
+
+@router.post("/news/gold")
+async def trigger_news_gold(
+    dry_run: bool = False,
+    _: None = Depends(require_auth),
+):
+    """Post today's gold price (สมาคมค้าทองคำ) as a text post."""
+    return await _news_endpoint("gold", dry_run)
 
 
 @router.post("/pipeline/predict")

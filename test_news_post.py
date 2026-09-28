@@ -6,8 +6,9 @@ from datetime import date
 from PIL import Image
 
 import poster
-from news_post import (OG_IMAGE_RE, SOURCE_RE, build_digest_message, build_lotto_message, crop_cover,
-                       reel_cover, validate_hot, validate_poster_plan)
+from news_post import (OG_IMAGE_RE, SOURCE_RE, affiliate_comment, build_digest_message, build_gold_message,
+                       build_lotto_message, build_pm25_message, crop_cover, parse_gold, pick_pm25,
+                       reel_cover, unescape_title, validate_hot, validate_poster_plan)
 
 STORIES = [{"id": str(i), "title": f"ข่าวที่ {i}", "body": "x", "category": "viral"} for i in range(1, 8)]
 
@@ -119,6 +120,52 @@ def test_reel_cover():
     assert reel_cover({"id": "456"}, "/tmp/_rc.jpg") is None
 
 
+def test_pm25():
+    stations = [
+        {"areaTH": "เขตธนบุรี, กรุงเทพฯ", "AQILast": {"date": "2026-09-28", "PM25": {"color_id": "1", "value": "7.9"}}},
+        {"areaTH": "เขตดินแดง, กรุงเทพฯ", "AQILast": {"date": "2026-09-27", "PM25": {"color_id": "3", "value": "30"}}},
+        {"areaTH": "เขตบางนา, กรุงเทพฯ", "AQILast": {"date": "2026-09-28", "PM25": {"color_id": "2", "value": "12.4"}}},
+        {"areaTH": "อ.เมือง, เชียงใหม่", "AQILast": {"date": "2026-09-28", "PM25": {"color_id": "4", "value": "45.2"}}},
+        {"areaTH": "อ.เมือง, ภูเก็ต", "AQILast": {"date": "2026-09-28", "PM25": {"color_id": "0", "value": "-1"}}},
+        {"areaTH": "x"},
+    ]
+    r = pick_pm25(stations, "2026-09-28")
+    assert r == [("กรุงเทพ", 12.4, "2"), ("เชียงใหม่", 45.2, "4")], r
+    msg = build_pm25_message(r, date(2026, 9, 28))
+    assert "กรุงเทพ 12 🟢 | เชียงใหม่ 45 🟠" in msg, msg
+    assert "http" not in msg and len(msg.splitlines()) == 4 and msg.endswith("#ฝุ่น #PM25"), msg
+
+
+def test_gold():
+    html = (
+        '<span id="DetailPlace_uc_goldprices1_lblAsTime">27/09/2569 เวลา 09:01 น. (ครั้งที่ 1)</span>'
+        '<span id="DetailPlace_uc_goldprices1_lblBLSell"><b><font color="Black">67,850.00</font></b></span>'
+        '<span id="DetailPlace_uc_goldprices1_lblBLBuy"><b><font color="Black">\n67,650.00</font></b></span>'
+        '<span id="DetailPlace_uc_goldprices1_lblOMSell"><b><font color="Black">68,650.00</font></b></span>'
+        '<span id="DetailPlace_uc_goldprices1_lblOMBuy"><b><font color="Black">66,294.68</font></b></span>'
+    )
+    g = parse_gold(html)
+    assert g["date"] == date(2026, 9, 27) and g["round"] == 1 and g["time"] == "09:01", g
+    assert g["bl_sell"] == "67,850" and g["om_buy"] == "66,294.68", g
+    msg = build_gold_message(g)
+    assert "67,850" in msg and "66,294.68" in msg and "http" not in msg and len(msg.splitlines()) == 5, msg
+    for broken in (html.replace("lblOMBuy", "lblOMBuyX"),
+                   html.replace("27/09/2569 เวลา 09:01 น. (ครั้งที่ 1)", "ไม่มีข้อมูล")):
+        try:
+            parse_gold(broken)
+        except RuntimeError:
+            continue
+        raise AssertionError(f"parse_gold accepted broken html: {broken!r}")
+
+
+def test_affiliate():
+    raw = "ผงซักฟอก \\nพิกัดสินค้า 👇\\nhttps://s.shopee.co.th/AAEj "
+    assert unescape_title(raw) == "ผงซักฟอก \nพิกัดสินค้า 👇\nhttps://s.shopee.co.th/AAEj"
+    import news_post
+    news_post.NOCODB_URL = ""
+    assert affiliate_comment("pm25") is None
+
+
 if __name__ == "__main__":
     test_digest()
     test_validate_hot()
@@ -127,4 +174,7 @@ if __name__ == "__main__":
     test_poster_plan()
     test_render_both_layouts()
     test_reel_cover()
+    test_pm25()
+    test_gold()
+    test_affiliate()
     print("ok")
