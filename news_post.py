@@ -104,7 +104,7 @@ MAX_POSTER_TRIES = 5  # stories checked for a usable photo before falling back t
 # n8n saves each reel's full poster (assets/card/cover.html) as <reel video_id>.jpg here after publishing
 # (host /root/n8n/n8n_ffmpeg/covers, mounted read-only; kept 3 days). /api/hot story ids are those video ids.
 COVER_DIR = os.getenv("REEL_COVER_DIR", "/covers")
-COVER_CROP = (285, 1350)  # 1080x1920 cover -> 1080x1350 (4:5) post: top offset + height; the cover keeps its text there
+COVER_CROP = (285, 1350)  # old 1080x1920 covers -> 1080x1350 (4:5): top offset + height (n8n now renders 4:5 directly)
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
 AIR4THAI_URL = "https://air4thai.pcd.go.th/services/getNewAQI_JSON.php"
@@ -315,6 +315,9 @@ def crop_cover(data: bytes, out_path: str) -> str | None:
     from PIL import Image
 
     im = Image.open(io.BytesIO(data)).convert("RGB")
+    if abs(im.height / im.width - 1.25) < 0.02:  # n8n now renders the poster as 4:5 with the whole photo: post as is
+        im.save(out_path, "JPEG", quality=92)
+        return out_path
     if im.height < im.width * 1.7:
         return None
     k = im.width / 1080
