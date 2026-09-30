@@ -162,8 +162,24 @@ async def _scheduled_horoscope() -> None:
 async def _scheduled_news(kind: str, hours: int | None = None, label: str | None = None) -> None:
     tag = f"news {kind}" + (f" ({label})" if label else "")
     print(f"[SCHEDULER] {tag} starting {datetime.now().isoformat()}")
-    result = await _news_pipeline(kind, hours=hours, label=label)
+    for attempt in range(1, NEWS_ATTEMPTS + 1):
+        result = await _news_pipeline(kind, hours=hours, label=label)
+        if not _is_network_error(result) or attempt == NEWS_ATTEMPTS:
+            break
+        print(f"[SCHEDULER] {tag} network error, retry {attempt + 1}/{NEWS_ATTEMPTS} in {NEWS_RETRY_S}s")
+        await asyncio.sleep(NEWS_RETRY_S)
     print(f"[SCHEDULER] {tag} done: status={result['status']}")
+
+
+# homelab DNS drops for a few minutes now and then (2026-09-30 07:00: pm25 + digest lost)
+NEWS_ATTEMPTS, NEWS_RETRY_S = 3, 300
+# connect-stage failures only: a read timeout may come after Facebook already took the post
+NETWORK_ERRORS = ("NameResolutionError", "Failed to resolve", "Max retries exceeded")
+
+
+def _is_network_error(result: dict) -> bool:
+    """Failed before anything was posted because a site was unreachable: safe to run again."""
+    return result.get("status") == "error" and any(m in str(result.get("error", "")) for m in NETWORK_ERRORS)
 
 
 async def _scheduled_news_hot() -> None:
