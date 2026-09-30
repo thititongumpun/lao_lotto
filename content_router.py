@@ -3,7 +3,7 @@ Content pipeline router — content_router.py
 
 Mounted into main.py under /content.
 Call register_jobs(scheduler) from main's lifespan to add the 22:30 content,
-00:30 horoscope, and news (hot / digest / lotto) cron jobs.
+00:30 horoscope, news (hot / digest / lotto) and traffic (TomTom, every 15 min) cron jobs.
 """
 
 import asyncio
@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from pipeline import RESULT_SENTINEL
@@ -145,6 +145,12 @@ async def _news_pipeline(
     return result
 
 
+async def _traffic_pipeline(dry_run: bool = False) -> dict:
+    result = await _run_subprocess("traffic", *(["--dry-run"] if dry_run else []))
+    _last_news["traffic"] = result
+    return result
+
+
 # ── Scheduler registration ─────────────────────────────────────────────────────
 
 async def _scheduled_job() -> None:
@@ -173,6 +179,8 @@ async def _scheduled_news(kind: str, hours: int | None = None, label: str | None
 
 # homelab DNS drops for a few minutes now and then (2026-09-30 07:00: pm25 + digest lost)
 NEWS_ATTEMPTS, NEWS_RETRY_S = 3, 300
+TRAFFIC_INTERVAL_MIN = int(os.getenv("TRAFFIC_INTERVAL_MIN", "15"))
+TRAFFIC_HOURS = os.getenv("TRAFFIC_HOURS", "6-21")  # last run 21:45
 # connect-stage failures only: a read timeout may come after Facebook already took the post
 NETWORK_ERRORS = ("NameResolutionError", "Failed to resolve", "Max retries exceeded")
 
@@ -204,6 +212,13 @@ async def _scheduled_news_pm25() -> None:
 
 async def _scheduled_news_gold() -> None:
     await _scheduled_news("gold")
+
+
+async def _scheduled_traffic() -> None:
+    # no retry loop: the next tick is the retry
+    print(f"[SCHEDULER] traffic starting {datetime.now().isoformat()}")
+    result = await _traffic_pipeline()
+    print(f"[SCHEDULER] traffic done: status={result['status']}")
 
 
 async def _scheduled_stats() -> None:
@@ -241,6 +256,7 @@ def register_jobs(scheduler) -> None:
         ("news_pm25",      _scheduled_news_pm25,           {"hour": 7, "minute": 5}),
         ("news_gold_am",   _scheduled_news_gold,           {"hour": 9, "minute": 30}),
         ("news_gold_pm",   _scheduled_news_gold,           {"hour": 15, "minute": 0}),
+        ("traffic",        _scheduled_traffic,             {"minute": f"*/{TRAFFIC_INTERVAL_MIN}", "hour": TRAFFIC_HOURS}),
     ]
     # Deploy-safe: the scheduler posts to the real Page, so the news jobs stay
     # off until NEWS_POSTS_ENABLED=1 — dry-run the /content/news/* endpoints first.
@@ -343,6 +359,22 @@ async def trigger_news_gold(
 ):
     """Post today's gold price (สมาคมค้าทองคำ) as a text post."""
     return await _news_endpoint("gold", dry_run)
+
+
+@router.post("/traffic/run")
+async def trigger_traffic(dry_run: bool = False, _: None = Depends(require_auth)):
+    """Poll TomTom for Bangkok traffic and post if the heavy/slow roads changed."""
+    result = await _traffic_pipeline(dry_run)
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
+@router.get("/traffic/usage")
+async def traffic_usage(days: int = Query(7, ge=1, le=90), _: None = Depends(require_auth)):
+    """Daily TomTom request counts."""
+    from traffic import usage
+    return await asyncio.to_thread(usage, days)
 
 
 @router.get("/stats")

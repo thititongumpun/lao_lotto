@@ -24,10 +24,13 @@ import os
 import time
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()  # PAGE_ID is read at import; main/other modules may import us first
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-PAGE_ID            = "598514650638901"
+PAGE_ID            = os.getenv("FACEBOOK_PAGE_ID", "598514650638901")
 GRAPH_BASE         = "https://graph.facebook.com"
 VERSION_UPLOAD     = "v24.0"   # used for container creation
 VERSION_MANAGE     = "v23.0"   # used for status check & publish

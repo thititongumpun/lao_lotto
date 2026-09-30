@@ -9,6 +9,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID}
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY}
     env_file:
       - .env
     volumes:

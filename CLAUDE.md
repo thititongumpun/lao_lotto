@@ -17,8 +17,11 @@ uv run python -c "from main import run_fetch_job; print(run_fetch_job(backfill=T
 # Horoscope post: dry run (no Facebook), optional --date YYYY-MM-DD
 uv run python -m horoscope --dry-run
 
+# Traffic post: dry run (no Facebook)
+uv run python -m traffic --dry-run
+
 # Offline self-checks
-uv run python test_pipeline.py && uv run python test_horoscope.py
+uv run python test_pipeline.py && uv run python test_horoscope.py && uv run python test_traffic.py
 
 # Docker
 docker compose up --build
@@ -43,6 +46,7 @@ Single-file FastAPI app (`main.py`) with three layers:
 - `news_post.py --kind pm25` — Air4Thai `getNewAQI_JSON.php` (TLS verify off: the site's cert chain is broken) → worst PM2.5 station per province (กรุงเทพ เชียงใหม่ ขอนแก่น ภูเก็ต) → template text post, no LLM. Cron 07:05 daily.
 - `news_post.py --kind gold` — `classic.goldtraders.or.th` HTML (`lblBLSell/lblBLBuy/lblOMSell/lblOMBuy/lblAsTime` spans) → template text post; skips if the latest announcement is not today, dedupes on date+announcement number. Cron 09:30 and 15:00 daily.
 - `stats.py` — read-only: every Page post of the last 7 days (`/posts` + `insights.metric(post_media_view)`) → `fb_post_stats` upsert, Page `monetization_approximate_earnings` → `fb_page_earnings`. Lane label = `fb_text_posts.kind` (horoscope marks its post there too), else media type. Cron 03:10 daily, not behind `NEWS_POSTS_ENABLED`.
+- `traffic.py` — TomTom flowSegmentData at 28 fixed points on 14 roads (road comes from the point config; API returns no road name); drops FRC4+, confidence<0.5, closures; median per road; heavy <0.40 / slow <0.60 / moderate <0.80, but a road is heavy only if ≥2 of its segments are <0.40 (else capped at slow); text-only post only when the heavy/slow signature changes and ≥`TRAFFIC_MIN_GAP_MIN` since the last post, same signature re-posted after 180 min; post row is marked before the Facebook call so a timeout cannot double-post; daily TomTom call count in `traffic_api_usage`, run skipped over `TRAFFIC_DAILY_CAP`. Cron `*/15 6-21` (06:00–21:45) behind `NEWS_POSTS_ENABLED`. `--dry-run` prints per-point frc/snapped coords.
 - pm25 / gold / lotto / digest post a 4:5 number card (`news_post.build_card` → `poster.card`) as a `/photos` post with the text as caption; card render failure → plain text post. `--dry-run` leaves `/tmp/card_<kind>.jpg`.
 - Both lanes then post a second comment from NocoDB table `affiliate` (`where tag = <kind> and active`, least-recently-used row, `title` is the whole comment incl. Shopee link); no matching row or NocoDB unset → no affiliate comment.
 
@@ -58,6 +62,8 @@ Single-file FastAPI app (`main.py`) with three layers:
 | POST | `/content/horoscope/run?date=&dry_run=false` | Horoscope text post (dry_run skips Facebook) |
 | POST | `/content/news/pm25?dry_run=false` | PM2.5 text post (Air4Thai) |
 | POST | `/content/news/gold?dry_run=false` | Gold price text post (goldtraders) |
+| POST | `/content/traffic/run?dry_run=false` | Bangkok traffic text post (TomTom) |
+| GET | `/content/traffic/usage?days=7` | Daily TomTom request counts |
 | GET | `/content/stats?days=30` | Avg views/reactions/comments/shares by lane and posting hour (posts older than 1 day) + daily Page earnings |
 
 All `/content/*` routes use HTTP Basic `admin`/`admin`; other paths 404 via `block_scanners` middleware.
@@ -69,7 +75,10 @@ All `/content/*` routes use HTTP Basic `admin`/`admin`; other paths 404 via `blo
 | `LOTTO_DB_URL` | PostgreSQL DSN — required |
 | `TZ` | Timezone for scheduler — set to `Asia/Bangkok` in compose |
 | `NEWS_POSTS_ENABLED` | `1` registers the news text-post jobs (hot/digest/lotto). Unset = jobs off; the `/content/news/*` endpoints still work for dry runs |
+| `TOMTOM_API_KEY` | TomTom traffic API key (traffic lane) |
+| `TRAFFIC_INTERVAL_MIN` / `TRAFFIC_HOURS` / `TRAFFIC_MIN_GAP_MIN` / `TRAFFIC_DAILY_CAP` | Traffic lane tuning; defaults 15, `6-21`, 60, 2300 (max 7 roads listed, fixed) |
 | `GEMINI_API_KEY` | Gemini (narration, TTS, horoscope rewrite) |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Workers AI (metadata, images) |
+| `FACEBOOK_PAGE_ID` | Facebook Page to post to; default `598514650638901` |
 | `FACEBOOK_ACCESS_TOKEN` | Page token for Reels + text posts (via `.env`) |
 | `NOCODB_BASE_URL` / `NOCODB_API_TOKEN` / `NOCODB_TABLE_NAME` | NocoDB `affiliate` table (v2 API, table id) for the affiliate comment on pm25/gold posts. Unset = no affiliate comment |
