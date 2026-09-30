@@ -425,6 +425,33 @@ def build_gold_message(g: dict) -> str:
     ])
 
 
+PM25_RGB = {"1": (0, 150, 220), "2": (40, 160, 70), "3": (220, 170, 0), "4": (240, 110, 20), "5": (210, 30, 30)}
+
+
+def build_card(kind: str, data, today: date, out_path: str, label: str = "") -> str | None:
+    """4:5 number card for a scheduled post (photo posts get ~3x the views of text). None -> text post."""
+    try:
+        d = thai_date(today)
+        if kind == "gold":
+            return poster.card("ราคาทองวันนี้", f"{d} · ครั้งที่ {data['round']} เวลา {data['time']}",
+                               [("ทองแท่ง ขายออก", data["bl_sell"]), ("ทองแท่ง รับซื้อ", data["bl_buy"]),
+                                ("รูปพรรณ ขายออก", data["om_sell"]), ("รูปพรรณ รับซื้อ", data["om_buy"])], out_path)
+        if kind == "pm25":
+            return poster.card("ค่าฝุ่น PM2.5 เช้านี้", f"{d} · µg/m³",
+                               [(p, str(round(v)), PM25_RGB.get(c, (20, 20, 20))) for p, v, c in data],
+                               out_path, accent=(120, 200, 255))
+        if kind == "lotto":
+            return poster.card("ผลหวยลาว", d, [("เลข 4 ตัว", data["digit4"]), ("เลข 3 ตัว", data["digit3"]),
+                                               ("เลข 2 ตัว", data["digit2"]), ("สัตว์นำโชค", data["animal"]),
+                                               ("เลขเสริม", data["dev_lottery"])], out_path, accent=(255, 140, 0))
+        if kind == "digest":
+            return poster.card(label, d, [("", f"{i + 1}. {s['title'].strip()}") for i, s in enumerate(data[:5])],
+                               out_path, accent=(230, 57, 70))
+    except Exception as exc:
+        print(f"[NEWS] {kind} card skipped: {exc}")
+    return None
+
+
 # ── Affiliate ──────────────────────────────────────────────────────────────────
 
 def unescape_title(t: str) -> str:
@@ -533,12 +560,13 @@ def run_digest(hours: int = 12, label: str = "สรุปข่าวเช้�
         message = build_digest_message(stories, label)
         print(message)
         ids = [s["id"] for s in stories]
+        image = build_card("digest", stories, datetime.now(BANGKOK).date(), "/tmp/card_digest.jpg", label)
         if dry_run:
-            return {"status": "dry_run", "video_ids": ids, "message": message}
+            return {"status": "dry_run", "video_ids": ids, "message": message, "card": image}
         comment = "\n".join(
             f"{DIGIT_EMOJI[i]} {s['url']}" for i, s in enumerate(stories)
         )
-        post_id = _publish(message, comment)
+        post_id = _publish(message, comment, image)
         for vid in ids:
             mark_posted(vid, "digest", post_id)
         return {"status": "ok", "video_ids": ids, "post_id": post_id}
@@ -565,9 +593,10 @@ def run_lotto(dry_run: bool = False) -> dict:
             return {"status": "skipped", "reason": "already_posted", "date": key}
         message = build_lotto_message(row)
         print(message)
+        image = build_card("lotto", row, row["date"], "/tmp/card_lotto.jpg")
         if dry_run:
-            return {"status": "dry_run", "video_id": key, "message": message}
-        post_id = _publish(message, f"ดูผลย้อนหลังและวิเคราะห์เลขเด็ด 👉 {SITE_URL}")
+            return {"status": "dry_run", "video_id": key, "message": message, "card": image}
+        post_id = _publish(message, f"ดูผลย้อนหลังและวิเคราะห์เลขเด็ด 👉 {SITE_URL}", image)
         mark_posted(key, "lotto", post_id)
         return {"status": "ok", "video_id": key, "post_id": post_id}
     except Exception as exc:
@@ -587,10 +616,12 @@ def run_pm25(dry_run: bool = False) -> dict:
             raise RuntimeError("air4thai: no fresh reading for today")
         message = build_pm25_message(readings, today)
         print(message)
+        image = build_card("pm25", readings, today, "/tmp/card_pm25.jpg")
         if dry_run:
             # ponytail: dry-run still rotates last_used_at; fine for a test knob
-            return {"status": "dry_run", "video_id": key, "message": message, "affiliate": affiliate_comment("pm25")}
-        post_id = _publish(message, "ดูค่าฝุ่นทุกสถานี 👉 https://air4thai.pcd.go.th")
+            return {"status": "dry_run", "video_id": key, "message": message, "card": image,
+                    "affiliate": affiliate_comment("pm25")}
+        post_id = _publish(message, "ดูค่าฝุ่นทุกสถานี 👉 https://air4thai.pcd.go.th", image)
         mark_posted(key, "pm25", post_id)
         return {"status": "ok", "video_id": key, "post_id": post_id, "affiliate": post_affiliate(post_id, "pm25")}
     except Exception as exc:
@@ -610,10 +641,12 @@ def run_gold(dry_run: bool = False) -> dict:
             return {"status": "skipped", "reason": "already_posted", "date": key}
         message = build_gold_message(g)
         print(message)
+        image = build_card("gold", g, g["date"], "/tmp/card_gold.jpg")
         if dry_run:
             # ponytail: dry-run still rotates last_used_at; fine for a test knob
-            return {"status": "dry_run", "video_id": key, "message": message, "affiliate": affiliate_comment("gold")}
-        post_id = _publish(message, "ราคาทองสมาคมค้าทองคำ 👉 https://www.goldtraders.or.th")
+            return {"status": "dry_run", "video_id": key, "message": message, "card": image,
+                    "affiliate": affiliate_comment("gold")}
+        post_id = _publish(message, "ราคาทองสมาคมค้าทองคำ 👉 https://www.goldtraders.or.th", image)
         mark_posted(key, "gold", post_id)
         return {"status": "ok", "video_id": key, "post_id": post_id, "affiliate": post_affiliate(post_id, "gold")}
     except Exception as exc:

@@ -208,6 +208,12 @@ def run_horoscope(target: date | None = None, dry_run: bool = False) -> dict:
         else:
             from facebook import post_text_to_facebook
             result["facebook"] = post_text_to_facebook(text)
+            try:  # label the post for /content/stats; the post is already live, never fail on this
+                from news_post import ensure_table, mark_posted
+                ensure_table()
+                mark_posted(target.isoformat(), "horoscope", result["facebook"]["id"])
+            except Exception as exc:
+                print(f"[HOROSCOPE] stats label skipped: {exc}")
     except Exception as exc:
         result = {"status": "error", "error": str(exc), "ran_at": now}
         print(f"[HOROSCOPE] error: {exc}")

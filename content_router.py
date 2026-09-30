@@ -206,6 +206,11 @@ async def _scheduled_news_gold() -> None:
     await _scheduled_news("gold")
 
 
+async def _scheduled_stats() -> None:
+    result = await _run_subprocess("stats")
+    print(f"[SCHEDULER] fb stats done: {result}")
+
+
 def register_jobs(scheduler) -> None:
     """Add content pipeline + horoscope cron jobs to an existing APScheduler instance."""
     scheduler.add_job(
@@ -220,9 +225,16 @@ def register_jobs(scheduler) -> None:
         id="horoscope_post",
         replace_existing=True,
     )
+    scheduler.add_job(  # read-only on Facebook, so not behind NEWS_POSTS_ENABLED
+        _scheduled_stats,
+        CronTrigger(hour=3, minute=10, timezone="Asia/Bangkok"),
+        id="fb_stats",
+        replace_existing=True,
+    )
     news_jobs = [
         ("news_hot",       _scheduled_news_hot,            {"hour": "8-22/2", "minute": 0}),
-        ("news_hot_b",     _scheduled_news_hot,            {"hour": "9-21/2", "minute": 30}),
+        # 09:30 moved to 22:30: photo/text posts at 07-09 avg ~230 views, 19-22 ~420 (/content/stats, Sep 2026)
+        ("news_hot_b",     _scheduled_news_hot,            {"hour": "11-21/2,22", "minute": 30}),
         ("news_digest_am", _scheduled_news_digest_morning, {"hour": 7, "minute": 0}),
         ("news_digest_pm", _scheduled_news_digest_evening, {"hour": 19, "minute": 0}),
         ("news_lotto",     _scheduled_news_lotto,          {"hour": 22, "minute": 15, "day_of_week": "mon,wed,fri"}),
@@ -331,6 +343,13 @@ async def trigger_news_gold(
 ):
     """Post today's gold price (สมาคมค้าทองคำ) as a text post."""
     return await _news_endpoint("gold", dry_run)
+
+
+@router.get("/stats")
+async def content_stats(days: int = 30, _: None = Depends(require_auth)):
+    """Avg views/reactions/comments/shares per lane and per posting hour, plus daily Page earnings."""
+    from stats import report
+    return await asyncio.to_thread(report, days)
 
 
 @router.post("/pipeline/predict")

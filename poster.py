@@ -415,3 +415,44 @@ def render(photo: Image.Image, lines: list[str], credit: str, out_path: str,
     _text(img, lines, credit, sensitive)
     img.save(out_path, "JPEG", quality=90)
     return out_path
+
+
+# ── Number card (gold / PM2.5 / lotto / digest photo post) ─────────────────────
+
+CARD_W, CARD_H = 1080, 1350  # 4:5, the tallest feed photo Facebook shows uncropped
+
+
+def _fit_font(d: ImageDraw.ImageDraw, text: str, size: int, max_w: int) -> ImageFont.FreeTypeFont:
+    while True:  # shrink until it fits
+        f = ImageFont.truetype(FONT, size)
+        if d.textlength(text, font=f) <= max_w or size <= 28:
+            return f
+        size -= 4
+
+
+def card(title: str, subtitle: str, rows: list[tuple], out_path: str,
+         accent: tuple = (255, 214, 31), footer: str = "1minhotspot") -> str:
+    """Headline card: title band, subtitle, then rows of (label, value[, value rgb]).
+    Empty label -> the value is a left-aligned full-width line (digest headlines)."""
+    img = Image.linear_gradient("L").rotate(90).resize((CARD_W, CARD_H)).point(lambda v: 18 + v // 8)
+    img = Image.merge("RGB", (img.point(lambda v: v // 2), img.point(lambda v: v // 2), img))  # navy fade
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, CARD_W, 210], fill=accent)
+    tf = _fit_font(d, title, 104, CARD_W - 100)
+    d.text((CARD_W // 2, 110), title, font=tf, fill=(20, 20, 20), anchor="mm")
+    d.text((CARD_W // 2, 275), subtitle, font=_fit_font(d, subtitle, 50, CARD_W - 100), fill="white", anchor="mm")
+    top, bottom = 350, CARD_H - 110
+    step = min(190, (bottom - top) // max(len(rows), 1))
+    for i, (label, value, *color) in enumerate(rows):
+        y0 = top + i * step
+        d.rounded_rectangle([50, y0, CARD_W - 50, y0 + step - 24], radius=28, fill=(255, 255, 255))
+        cy = y0 + (step - 24) // 2
+        fill = color[0] if color else (20, 20, 20)
+        if label:
+            d.text((90, cy), label, font=_fit_font(d, label, 56, 470), fill=(80, 80, 80), anchor="lm")
+            d.text((CARD_W - 90, cy), value, font=_fit_font(d, value, 84, 420), fill=fill, anchor="rm")
+        else:
+            d.text((90, cy), value, font=_fit_font(d, value, 52, CARD_W - 180), fill=fill, anchor="lm")
+    d.text((CARD_W // 2, CARD_H - 55), footer, font=ImageFont.truetype(FONT, 40), fill=accent, anchor="mm")
+    img.save(out_path, "JPEG", quality=92)
+    return out_path

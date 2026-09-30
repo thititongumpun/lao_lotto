@@ -166,6 +166,29 @@ def test_affiliate():
     assert affiliate_comment("pm25") is None
 
 
+def test_stats_parse():
+    from stats import parse_post
+    p = {"id": "1_2", "created_time": "2026-09-30T15:00:04+0000",
+         "attachments": {"data": [{"media_type": "photo"}]}, "shares": {"count": 3},
+         "reactions": {"summary": {"total_count": 5}}, "comments": {"summary": {"total_count": 2}},
+         "insights": {"data": [{"name": "post_media_view", "values": [{"value": 812}]}]}}
+    assert parse_post(p) == ("1_2", "photo", "2026-09-30T15:00:04+0000", 812, 5, 2, 3)
+    bare = {k: p[k] for k in ("id", "created_time", "reactions", "comments")}  # text post, no shares/insights
+    assert parse_post(bare) == ("1_2", "text", "2026-09-30T15:00:04+0000", None, 5, 2, 0)
+
+
+def test_cards():
+    from news_post import build_card
+    today = date(2026, 9, 30)
+    gold = {"bl_sell": "67,850", "bl_buy": "67,650", "om_sell": "68,650", "om_buy": "66,315.40", "round": 3, "time": "09:38"}
+    lotto = {"digit4": "1234", "digit3": "234", "digit2": "34", "animal": "ช้าง", "dev_lottery": "56"}
+    for kind, data in (("gold", gold), ("pm25", [("กรุงเทพ", 82.4, "5"), ("ภูเก็ต", 9.0, "1")]),
+                       ("lotto", lotto), ("digest", STORIES)):
+        out = build_card(kind, data, today, f"/tmp/_card_{kind}.jpg", "สรุปข่าวเช้า")
+        assert out and Image.open(out).size == (1080, 1350), kind
+    assert build_card("gold", {}, today, "/tmp/_card_bad.jpg") is None  # broken data -> text post
+
+
 if __name__ == "__main__":
     test_digest()
     test_validate_hot()
@@ -177,4 +200,6 @@ if __name__ == "__main__":
     test_pm25()
     test_gold()
     test_affiliate()
+    test_stats_parse()
+    test_cards()
     print("ok")

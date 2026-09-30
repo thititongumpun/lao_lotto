@@ -42,6 +42,8 @@ Single-file FastAPI app (`main.py`) with three layers:
 - `horoscope.py` — Sanook horoscope RSS → 7 per-birth-day articles for today (pubDate = yesterday 17:01 UTC) → `parse_article()` → one Gemini rewrite (`gen_predict.call_gemini`) → `facebook.post_text_to_facebook()` text-only page post. Cron 00:30 daily.
 - `news_post.py --kind pm25` — Air4Thai `getNewAQI_JSON.php` (TLS verify off: the site's cert chain is broken) → worst PM2.5 station per province (กรุงเทพ เชียงใหม่ ขอนแก่น ภูเก็ต) → template text post, no LLM. Cron 07:05 daily.
 - `news_post.py --kind gold` — `classic.goldtraders.or.th` HTML (`lblBLSell/lblBLBuy/lblOMSell/lblOMBuy/lblAsTime` spans) → template text post; skips if the latest announcement is not today, dedupes on date+announcement number. Cron 09:30 and 15:00 daily.
+- `stats.py` — read-only: every Page post of the last 7 days (`/posts` + `insights.metric(post_media_view)`) → `fb_post_stats` upsert, Page `monetization_approximate_earnings` → `fb_page_earnings`. Lane label = `fb_text_posts.kind` (horoscope marks its post there too), else media type. Cron 03:10 daily, not behind `NEWS_POSTS_ENABLED`.
+- pm25 / gold / lotto / digest post a 4:5 number card (`news_post.build_card` → `poster.card`) as a `/photos` post with the text as caption; card render failure → plain text post. `--dry-run` leaves `/tmp/card_<kind>.jpg`.
 - Both lanes then post a second comment from NocoDB table `affiliate` (`where tag = <kind> and active`, least-recently-used row, `title` is the whole comment incl. Shopee link); no matching row or NocoDB unset → no affiliate comment.
 
 ## API Endpoints
@@ -56,6 +58,7 @@ Single-file FastAPI app (`main.py`) with three layers:
 | POST | `/content/horoscope/run?date=&dry_run=false` | Horoscope text post (dry_run skips Facebook) |
 | POST | `/content/news/pm25?dry_run=false` | PM2.5 text post (Air4Thai) |
 | POST | `/content/news/gold?dry_run=false` | Gold price text post (goldtraders) |
+| GET | `/content/stats?days=30` | Avg views/reactions/comments/shares by lane and posting hour (posts older than 1 day) + daily Page earnings |
 
 All `/content/*` routes use HTTP Basic `admin`/`admin`; other paths 404 via `block_scanners` middleware.
 
