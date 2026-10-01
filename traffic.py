@@ -177,7 +177,7 @@ def build_message(roads: list[dict], now: datetime) -> str:
     for r in roads:
         l = r["traffic_level"]
         lines.append(f"{EMOJI[l]} {r['road_name']} {LABEL[l]} ความเร็วราว {round(r['current_speed'])} กม./ชม.")
-    lines += ["", f"อัปเดตล่าสุด {now:%H:%M} น.", "ข้อมูล: TomTom Traffic"]
+    lines += ["", f"อัปเดตล่าสุด {now:%H:%M} น.", "สรุปข่าวร้อนใน 1 นาทีการจราจร"]
     return "\n".join(lines)
 
 
