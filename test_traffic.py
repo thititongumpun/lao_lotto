@@ -224,6 +224,16 @@ def test_fetch_point_bad_payload():
         traffic.requests.get = orig
 
 
+def test_build_card():
+    import os
+    roads = [{"traffic_level": "heavy", "road_name": "รัชดาฯ", "current_speed": 12},
+             {"traffic_level": "slow", "road_name": "สุขุมวิท", "current_speed": 25},
+             {"traffic_level": "moderate", "road_name": "พหลโยธิน", "current_speed": 38}]
+    out = "/tmp/card_traffic_test.jpg"
+    assert traffic.build_card(roads, traffic.datetime(2026, 10, 2, 17, 30), out) == out
+    assert os.path.getsize(out) > 10_000
+
+
 if __name__ == "__main__":
     test_fetch_point_bad_payload()
     test_normalize()
@@ -233,4 +243,5 @@ if __name__ == "__main__":
     test_select()
     test_signature()
     test_build_message()
+    test_build_card()
     print("ok")

@@ -15,6 +15,7 @@ import os
 import statistics
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -77,6 +78,9 @@ LEVELS = ["heavy", "slow", "moderate", "free"]
 EMOJI = {"heavy": "🔴", "slow": "🟠", "moderate": "🟡", "free": "🟢"}
 LABEL = {"heavy": "รถติดหนัก", "slow": "ชะลอตัว", "moderate": "หนาแน่น", "free": "รถคล่อง"}
 CONGESTED = ("heavy", "slow")
+RGB = {"heavy": (210, 30, 30), "slow": (240, 110, 20), "moderate": (220, 170, 0), "free": (40, 160, 70)}
+# generated once with gen_image.generate_image_klein (flux-2-klein-4b); posts only fire on heavy/slow
+SCENE = {l: Path(__file__).parent / "assets" / f"traffic_{l}.jpg" for l in CONGESTED}
 
 
 # ── TomTom ─────────────────────────────────────────────────────────────────────
@@ -181,6 +185,20 @@ def build_message(roads: list[dict], now: datetime) -> str:
     return "\n".join(lines)
 
 
+def build_card(roads: list[dict], now: datetime, out_path: str) -> str | None:
+    """4:5 photo card over a stock heavy/slow scene. None -> text post."""
+    try:
+        import poster
+        worst = roads[0]["traffic_level"]  # roads is severity-sorted
+        return poster.card("การจราจรกรุงเทพฯ", f"อัปเดต {now:%H:%M} น. · ความเร็ว กม./ชม.",
+                           [(r["road_name"], f"{LABEL[r['traffic_level']]} {round(r['current_speed'])}",
+                             RGB[r["traffic_level"]]) for r in roads],
+                           out_path, accent=RGB[worst], bg=str(SCENE[worst]))
+    except Exception as exc:
+        print(f"[TRAFFIC] card failed, posting text: {exc}")
+        return None
+
+
 # ── DB ─────────────────────────────────────────────────────────────────────────
 
 def ensure_usage() -> None:
@@ -261,15 +279,18 @@ def run(dry_run: bool = False) -> dict:
             return {"status": "skipped", "reason": "unchanged", "signature": sig, "calls": calls}
         message = build_message(picked, now)
         print(message)
+        image = build_card(picked, now, "/tmp/card_traffic.jpg")
         if dry_run:
-            return {"status": "dry_run", "message": message, "signature": sig, "roads": roads,
+            return {"status": "dry_run", "message": message, "card": image, "signature": sig, "roads": roads,
                     "segments": segs, "calls": calls}
-        from facebook import post_text_to_facebook
+        from facebook import post_photo_to_facebook, post_text_to_facebook
         key = f"{now:%Y-%m-%dT%H:%M}|{sig}"
         # row first: if FB accepts but we time out/crash, the next tick waits a gap instead of reposting
         mark_posted(key, "traffic", "pending")
         try:
-            post_id = post_text_to_facebook(message)["id"]
+            # no text fallback on a failed photo post: FB may have accepted it (double post)
+            post_id = (post_photo_to_facebook(image, message)["post_id"] if image
+                       else post_text_to_facebook(message)["id"])
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code < 500:  # FB clearly rejected: free the slot
                 with _conn() as conn, conn.cursor() as cur:

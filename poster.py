@@ -431,11 +431,15 @@ def _fit_font(d: ImageDraw.ImageDraw, text: str, size: int, max_w: int) -> Image
 
 
 def card(title: str, subtitle: str, rows: list[tuple], out_path: str,
-         accent: tuple = (255, 214, 31), footer: str = "1minhotspot") -> str:
+         accent: tuple = (255, 214, 31), footer: str = "1minhotspot", bg: str | None = None) -> str:
     """Headline card: title band, subtitle, then rows of (label, value[, value rgb]).
-    Empty label -> the value is a left-aligned full-width line (digest headlines)."""
-    img = Image.linear_gradient("L").rotate(90).resize((CARD_W, CARD_H)).point(lambda v: 18 + v // 8)
-    img = Image.merge("RGB", (img.point(lambda v: v // 2), img.point(lambda v: v // 2), img))  # navy fade
+    Empty label -> the value is a left-aligned full-width line (digest headlines).
+    bg -> that photo, darkened, instead of the navy fade."""
+    if bg:
+        img = ImageEnhance.Brightness(ImageOps.fit(Image.open(bg).convert("RGB"), (CARD_W, CARD_H))).enhance(0.6)
+    else:
+        img = Image.linear_gradient("L").rotate(90).resize((CARD_W, CARD_H)).point(lambda v: 18 + v // 8)
+        img = Image.merge("RGB", (img.point(lambda v: v // 2), img.point(lambda v: v // 2), img))  # navy fade
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, CARD_W, 210], fill=accent)
     tf = _fit_font(d, title, 104, CARD_W - 100)
