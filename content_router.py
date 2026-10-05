@@ -214,6 +214,14 @@ async def _scheduled_news_gold() -> None:
     await _scheduled_news("gold")
 
 
+async def _scheduled_news_week() -> None:
+    await _scheduled_news("week")
+
+
+async def _scheduled_news_talk() -> None:
+    await _scheduled_news("talk")
+
+
 async def _scheduled_traffic() -> None:
     # no retry loop: the next tick is the retry
     print(f"[SCHEDULER] traffic starting {datetime.now().isoformat()}")
@@ -256,6 +264,8 @@ def register_jobs(scheduler) -> None:
         ("news_pm25",      _scheduled_news_pm25,           {"hour": 7, "minute": 5}),
         ("news_gold_am",   _scheduled_news_gold,           {"hour": 9, "minute": 30}),
         ("news_gold_pm",   _scheduled_news_gold,           {"hour": 15, "minute": 0}),
+        ("news_week",      _scheduled_news_week,           {"hour": 19, "minute": 30, "day_of_week": "sun"}),
+        ("news_talk",      _scheduled_news_talk,           {"hour": 20, "minute": 45}),
         ("traffic",        _scheduled_traffic,             {"minute": f"*/{TRAFFIC_INTERVAL_MIN}", "hour": TRAFFIC_HOURS}),
     ]
     # Deploy-safe: the scheduler posts to the real Page, so the news jobs stay
@@ -359,6 +369,18 @@ async def trigger_news_gold(
 ):
     """Post today's gold price (สมาคมค้าทองคำ) as a text post."""
     return await _news_endpoint("gold", dry_run)
+
+
+@router.post("/news/week")
+async def trigger_news_week(dry_run: bool = False, _: None = Depends(require_auth)):
+    """Post the weekly recap (แง่คิด + ควรทำ/ไม่ควรทำ) of the week's best hot stories as a text post."""
+    return await _news_endpoint("week", dry_run)
+
+
+@router.post("/news/talk")
+async def trigger_news_talk(dry_run: bool = False, hours: int | None = None, _: None = Depends(require_auth)):
+    """Post one hot story as a แง่คิด/ควรทำ/ไม่ควรทำ text post with an open question."""
+    return await _news_endpoint("talk", dry_run, hours=hours)
 
 
 @router.post("/traffic/run")

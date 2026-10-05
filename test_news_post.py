@@ -8,7 +8,8 @@ from PIL import Image
 import poster
 from news_post import (OG_IMAGE_RE, SOURCE_RE, affiliate_comment, build_digest_message, build_gold_message,
                        build_lotto_message, build_pm25_message, crop_cover, parse_gold, pick_pm25,
-                       reel_cover, unescape_title, validate_hot, validate_poster_plan)
+                       rank_week, reel_cover, unescape_title, validate_hot, validate_poster_plan,
+                       validate_text)
 
 STORIES = [{"id": str(i), "title": f"ข่าวที่ {i}", "body": "x", "category": "viral"} for i in range(1, 8)]
 
@@ -30,6 +31,28 @@ def test_validate_hot():
         except RuntimeError:
             continue
         raise AssertionError(f"validator accepted: {bad!r}")
+
+
+def test_validate_text():
+    ok = "📌 ข้อเท็จจริง\n" + "สรุปข่าวยาวพอสำหรับผู้อ่าน " * 6 + "\n💡 แง่คิด: ระวังไว้\nคุณคิดว่าอย่างไร?\n#แง่คิดจากข่าว #ไวรัล"
+    assert validate_text("**" + ok + "**", 150, 800) == ok
+    for bad in (ok.replace("ระวังไว้", "อ่านต่อ https://x.com"),        # URL
+                ok.replace("ระวังไว้", "ใครเห็นด้วยพิมพ์ 1"),            # comment bait
+                ok.replace("ระวังไว้", "กดแชร์ให้เพื่อนรู้"),             # share bait
+                ok.replace("คุณคิดว่าอย่างไร?", "จบข่าว"),             # no closing question
+                "สั้นไป?"):
+        try:
+            validate_text(bad, 150, 800)
+        except RuntimeError:
+            continue
+        raise AssertionError(f"validator accepted: {bad!r}")
+    assert "แชร์ลูกโซ่" in validate_text(ok.replace("ระวังไว้", "ระวังแชร์ลูกโซ่"), 150, 800)  # news word, not bait
+
+
+def test_rank_week():
+    stories = [{"id": c} for c in "abcdefg"]
+    assert [s["id"] for s in rank_week(stories, {"c": 900, "f": 50, "a": 300})] == ["c", "a", "f", "b", "d"]
+    assert [s["id"] for s in rank_week(stories, {})] == list("abcde")  # no stats -> /api/hot order
 
 
 def test_lotto():
@@ -192,6 +215,8 @@ def test_cards():
 if __name__ == "__main__":
     test_digest()
     test_validate_hot()
+    test_validate_text()
+    test_rank_week()
     test_lotto()
     test_source_and_og()
     test_poster_plan()
