@@ -287,6 +287,9 @@ def build_hot_message(story: dict) -> str:
 BAIT_WORDS = ("พิมพ์ 1", "พิมพ์1", "คอมเมนต์ 1", "กดแชร์", "แชร์ให้", "แชร์ต่อ", "แชร์เลย",
               "กดไลค์", "กดไลก์", "แท็กเพื่อน", "กดติดตาม")
 
+# flash-lite often closes with a Thai question word and no "?"
+QUESTION_END = re.compile(r"(\?|ไหม|มั้ย|ยังไง|อย่างไร|หรือไม่|บ้าง|อะไร|ไหน|เปล่า)\s*(คะ|ครับ|นะ|จ๊ะ)?\s*\??\s*$")
+
 TALK_SYSTEM = SYSTEM.replace("ความยาวรวมไม่เกิน 500 ตัวอักษร ", "") + (
     " ใส่มุมมองของเพจเอง (แง่คิด ข้อควรทำ ข้อไม่ควรทำ) ที่ใช้ได้จริงในชีวิตประจำวัน "
     "ห้ามแต่งข้อเท็จจริงที่ไม่มีในข่าว "
@@ -309,7 +312,7 @@ def validate_text(text: str, min_chars: int, max_chars: int) -> str:
     if bait:
         raise RuntimeError(f"text post has engagement bait {bait}: {text!r}")
     body = [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
-    if not body or not body[-1].rstrip().endswith("?"):
+    if not body or not QUESTION_END.search(body[-1]):
         raise RuntimeError(f"text post does not end with a question: {text!r}")
     return text
 

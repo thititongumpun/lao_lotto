@@ -46,6 +46,8 @@ def test_validate_text():
         except RuntimeError:
             continue
         raise AssertionError(f"validator accepted: {bad!r}")
+    for q in ("คุณมองเรื่องนี้ยังไงบ้างคะ", "คุณเห็นด้วยไหม", "แบบไหนดีที่สุดครับ ?"):
+        validate_text(ok.replace("คุณคิดว่าอย่างไร?", q), 150, 800)
     assert "แชร์ลูกโซ่" in validate_text(ok.replace("ระวังไว้", "ระวังแชร์ลูกโซ่"), 150, 800)  # news word, not bait
 
 
