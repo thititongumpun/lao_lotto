@@ -355,12 +355,13 @@ def validate_text(text: str, min_chars: int, max_chars: int) -> str:
     return text
 
 
-def _gemini_text(prompt: str, min_chars: int, max_chars: int, max_tokens: int = 4096) -> str:
+def _gemini_text(prompt: str, min_chars: int, max_chars: int, max_tokens: int = 4096,
+                 model: str | None = None) -> str:
     """One Gemini call, one retry on a rejected draft."""
     from gen_predict import call_gemini
     for attempt in (1, 2):
         try:
-            return validate_text(call_gemini(prompt, TEXT_SYSTEM, max_tokens), min_chars, max_chars)
+            return validate_text(call_gemini(prompt, TEXT_SYSTEM, max_tokens, model), min_chars, max_chars)
         except RuntimeError as exc:
             if attempt == 2:
                 raise
@@ -800,7 +801,10 @@ def run_hone(dry_run: bool = False) -> dict:
         if already_posted(story["id"], "hone"):
             return {"status": "skipped", "reason": "already_posted", "id": story["id"]}
         print(f"[NEWS] hone: {story['id']} {story['title']}")
-        message = _gemini_text(build_hone_prompt(story), 800, 12000, max_tokens=16384)
+        # HONE_GEMINI_MODEL switches only this lane (e.g. a stronger model for long full-detail rewrites)
+        model = os.getenv("HONE_GEMINI_MODEL") or None
+        print(f"[NEWS] hone model: {model or 'default'}")
+        message = _gemini_text(build_hone_prompt(story), 800, 12000, max_tokens=16384, model=model)
         print(message)
         if dry_run:
             return {"status": "dry_run", "id": story["id"], "message": message}

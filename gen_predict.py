@@ -251,8 +251,8 @@ def format_analysis_for_prompt(a: dict, rows: list[dict]) -> str:
 
 # ── Gemini Integration ─────────────────────────────────────────────────────────
 
-def call_gemini(prompt: str, system: str, max_tokens: int = 4096) -> str:
-    """Call Gemini 2.5 Flash Lite and return the generated text."""
+def call_gemini(prompt: str, system: str, max_tokens: int = 4096, model: str | None = None) -> str:
+    """Call Gemini (GEMINI_MODEL unless a lane passes its own model) and return the generated text."""
     from google import genai
     from google.genai import types
 
@@ -267,7 +267,7 @@ def call_gemini(prompt: str, system: str, max_tokens: int = 4096) -> str:
 
     parts = []
     for chunk in client.models.generate_content_stream(
-        model=GEMINI_MODEL,
+        model=model or GEMINI_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system,

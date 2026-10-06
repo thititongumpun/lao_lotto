@@ -80,6 +80,7 @@ All `/content/*` routes use HTTP Basic `admin`/`admin`; other paths 404 via `blo
 | `TOMTOM_API_KEY` | TomTom traffic API key (traffic lane) |
 | `TRAFFIC_INTERVAL_MIN` / `TRAFFIC_HOURS` / `TRAFFIC_MIN_GAP_MIN` / `TRAFFIC_DAILY_CAP` | Traffic lane tuning; defaults 15, `6-21`, 60, 2300 (max 7 roads listed, fixed) |
 | `GEMINI_API_KEY` | Gemini (narration, TTS, horoscope rewrite) |
+| `HONE_GEMINI_MODEL` | Gemini model for the `hone` lane only (via `.env`); unset = `gen_predict.GEMINI_MODEL`. Output price includes thinking tokens |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Workers AI (metadata, images) |
 | `FACEBOOK_PAGE_ID` | Facebook Page to post to; default `598514650638901` |
 | `FACEBOOK_ACCESS_TOKEN` | Page token for Reels + text posts (via `.env`) |
