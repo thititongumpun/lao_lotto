@@ -7,8 +7,8 @@ from PIL import Image
 
 import poster
 from news_post import (OG_IMAGE_RE, SOURCE_RE, affiliate_comment, build_digest_message, build_gold_message,
-                       build_lotto_message, build_pm25_message, crop_cover, parse_gold, pick_pm25,
-                       rank_week, reel_cover, unescape_title, validate_hot, validate_poster_plan,
+                       build_lotto_message, build_pm25_message, crop_cover, parse_gold, parse_hone, pick_hone,
+                       pick_pm25, reel_cover, unescape_title, validate_hot, validate_poster_plan,
                        validate_text)
 
 STORIES = [{"id": str(i), "title": f"ข่าวที่ {i}", "body": "x", "category": "viral"} for i in range(1, 8)]
@@ -51,10 +51,34 @@ def test_validate_text():
     assert "แชร์ลูกโซ่" in validate_text(ok.replace("ระวังไว้", "ระวังแชร์ลูกโซ่"), 150, 800)  # news word, not bait
 
 
-def test_rank_week():
-    stories = [{"id": c} for c in "abcdefg"]
-    assert [s["id"] for s in rank_week(stories, {"c": 900, "f": 50, "a": 300})] == ["c", "a", "f", "b", "d"]
-    assert [s["id"] for s in rank_week(stories, {})] == list("abcde")  # no stats -> /api/hot order
+def test_parse_hone():
+    import json
+    detail = "<p>เรื่องราวของโหนกระแสวันนี้ &amp; แม่</p><p>หนุ่ม กรรชัย ถาม</p>"
+    items = [{"id": "uq7fMrdLGZj3JmnsjVY8", "title": " แม่ร้องเรียน ", "public_date": 1791193740, "content_detail": "$1a"},
+             {"id": "abcdefghijklmnopqrst", "title": "inline", "public_date": 1791193740, "content_detail": "<p>สั้น</p>"},
+             {"id": "zzzzzzzzzzzzzzzzzzzz", "title": "card", "public_date": 1}]  # list card without content_detail
+    stream = "0:" + json.dumps({"x": items}, ensure_ascii=False, separators=(",", ":")) + f"\n1a:T{len(detail.encode()):x},{detail}2:[]\n"
+    chunks = [json.dumps(stream[:50], ensure_ascii=False)[1:-1], json.dumps(stream[50:], ensure_ascii=False)[1:-1]]
+    html = "".join(f'<script>self.__next_f.push([1,"{c}"])</script>' for c in chunks)
+    got = parse_hone(html)
+    assert [g["id"] for g in got] == ["uq7fMrdLGZj3JmnsjVY8", "abcdefghijklmnopqrst"], got
+    assert got[0]["title"] == "แม่ร้องเรียน" and got[0]["url"].endswith("/content/uq7fMrdLGZj3JmnsjVY8")
+    assert got[0]["body"] == "เรื่องราวของโหนกระแสวันนี้ & แม่\nหนุ่ม กรรชัย ถาม", got[0]["body"]
+    assert got[1]["body"] == "สั้น"
+
+
+def test_pick_hone():
+    day = date(2026, 10, 5)
+    ep = {"id": "ep", "public_date": 1791193740, "body": "เรื่องราวของโหนกระแสวันนี้ " * 5}  # 10-05 16:49
+    items = [
+        {"id": "yesterday", "public_date": 1791193740 - 86400, "body": ep["body"] * 2},
+        {"id": "morning", "public_date": 1791193740 - 8 * 3600, "body": ep["body"] * 2},  # 08:49
+        {"id": "other", "public_date": 1791193740, "body": "น้ำท่วมอยุธยา " * 20},
+        ep,
+        {"id": "short", "public_date": 1791193740 + 60, "body": "ในรายการ"},
+    ]
+    assert pick_hone(items, day)["id"] == "ep"
+    assert pick_hone(items[:3], day) is None  # no episode today -> skip
 
 
 def test_lotto():
@@ -218,7 +242,8 @@ if __name__ == "__main__":
     test_digest()
     test_validate_hot()
     test_validate_text()
-    test_rank_week()
+    test_parse_hone()
+    test_pick_hone()
     test_lotto()
     test_source_and_og()
     test_poster_plan()

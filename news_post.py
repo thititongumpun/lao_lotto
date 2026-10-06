@@ -1,7 +1,7 @@
 """
 News text posts for the Facebook page — news_post.py
 
-Five kinds of text-only posts (no URL in the body; the link goes in the first
+Six kinds of text-only posts (no URL in the body; the link goes in the first
 comment so Content Monetization keeps paying and the 2-free-link-posts/month
 cap on Meta One is never hit):
 
@@ -10,27 +10,27 @@ cap on Meta One is never hit):
   lotto   — today's Lao lottery numbers from the lao_lottery table
   pm25    — morning PM2.5 readings from Air4Thai, plus an optional affiliate comment
   gold    — goldtraders.or.th announce prices, plus an optional affiliate comment
-  week    — Sunday recap of the week's 5 best hot stories: แง่คิด + ควรทำ/ไม่ควรทำ, text only, no link
-  talk    — daily แง่คิด/ควรทำ/ไม่ควรทำ + open question on one hot story, text only
+  hone    — daily summary of today's โหนกระแส episode (honekrasae.com write-up), text only
 
 Run as a SHORT-LIVED subprocess (same contract as pipeline.py / horoscope.py):
-    python -m news_post --kind hot|digest|lotto|pm25|gold|week|talk [--hours N] [--label TEXT] [--dry-run]
+    python -m news_post --kind hot|digest|lotto|pm25|gold|hone [--hours N] [--label TEXT] [--dry-run]
 Last stdout line is RESULT_SENTINEL + json; everything else is logs.
 """
 
 import argparse
+from html import unescape
 import json
 import os
 import re
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 import psycopg2
 import requests
 import urllib3
 from dotenv import load_dotenv
 
-from horoscope import BANGKOK, THAI_MONTHS_REV, thai_date
+from horoscope import BANGKOK, thai_date
 import poster
 from pipeline import RESULT_SENTINEL
 
@@ -107,6 +107,11 @@ MAX_POSTER_TRIES = 5  # stories checked for a usable photo before falling back t
 # (host /root/n8n/n8n_ffmpeg/covers, mounted read-only; kept 3 days). /api/hot story ids are those video ids.
 COVER_DIR = os.getenv("REEL_COVER_DIR", "/covers")
 COVER_CROP = (285, 1350)  # old 1080x1920 covers -> 1080x1350 (4:5): top offset + height (n8n now renders 4:5 directly)
+HONE_URL = "https://www.honekrasae.com/group"
+HONE_SITE = "https://www.honekrasae.com/content/"
+# the show's write-ups are tagged either group; the text decides (see pick_hone)
+HONE_GROUPS = "โหนกระแส,ข่าวกำลังโหน"
+HONE_MARKERS = ("โหนกระแสวันนี้", "หนุ่ม กรรชัย", "ในรายการ", "โฟนอิน")
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
 AIR4THAI_URL = "https://air4thai.pcd.go.th/services/getNewAQI_JSON.php"
@@ -130,6 +135,41 @@ def fetch_hot(hours: int, limit: int) -> list[dict]:
     resp.raise_for_status()
     items = resp.json()
     print(f"[NEWS] /api/hot hours={hours} limit={limit}: {len(items)} item(s)")
+    return items
+
+
+def parse_hone(html: str) -> list[dict]:
+    """Next.js RSC payload (self.__next_f.push chunks) -> [{id, title, url, public_date, body}]."""
+    # ponytail: scrapes the RSC stream; breaks if honekrasae changes its page shape
+    text = "".join(json.loads(f'"{c}"') for c in re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)', html, re.S))
+    # long strings are hoisted into text rows "<hex id>:T<hex utf-8 byte length>,<text>" and referenced as "$<hex id>"
+    raw = text.encode()
+    rows = {m.group(1).decode(): raw[m.end():m.end() + int(m.group(2), 16)].decode("utf-8", "ignore")
+            for m in re.finditer(rb"(?<![0-9A-Za-z])([0-9a-f]{1,6}):T([0-9a-f]+),", raw)}
+    items, dec, seen = [], json.JSONDecoder(), set()
+    for m in re.finditer(r'\{"id":"[A-Za-z0-9]{20}"', text):
+        try:
+            obj, _ = dec.raw_decode(text, m.start())
+        except ValueError:
+            continue
+        if obj["id"] in seen or "content_detail" not in obj or not obj.get("public_date"):
+            continue
+        seen.add(obj["id"])
+        detail = obj.get("content_detail") or ""
+        if detail.startswith("$") and detail[1:] in rows:
+            detail = rows[detail[1:]]
+        body = re.sub(r"<[^>]+>", "\n", detail)
+        body = "\n".join(l.strip() for l in unescape(body).splitlines() if l.strip())
+        items.append({"id": obj["id"], "title": (obj.get("title") or "").strip(), "url": HONE_SITE + obj["id"],
+                      "public_date": int(obj["public_date"]), "body": body})
+    return items
+
+
+def fetch_hone() -> list[dict]:
+    resp = requests.get(HONE_URL, params={"groups": HONE_GROUPS, "title": "x"}, headers=UA, timeout=20)
+    resp.raise_for_status()
+    items = parse_hone(resp.text)
+    print(f"[NEWS] honekrasae: {len(items)} item(s)")
     return items
 
 
@@ -279,9 +319,9 @@ def build_hot_message(story: dict) -> str:
     return validate_hot(call_gemini(build_hot_prompt(story), SYSTEM))
 
 
-# ── Text-only lanes: week recap + daily talk ──────────────────────────────────
+# ── Text-only lanes: daily โหนกระแส summary ──────────────────────────────────
 # Content Monetization pays text posts per qualified view; comments/shares only
-# buy distribution. Our own "แง่คิด / ควรทำ-ไม่ควรทำ" angle keeps them clear of the
+# buy distribution. A full rewrite in our own words keeps them clear of the
 # unoriginal-content rule, and BAIT_WORDS keeps them clear of the engagement-bait demotion.
 
 BAIT_WORDS = ("พิมพ์ 1", "พิมพ์1", "คอมเมนต์ 1", "กดแชร์", "แชร์ให้", "แชร์ต่อ", "แชร์เลย",
@@ -290,13 +330,11 @@ BAIT_WORDS = ("พิมพ์ 1", "พิมพ์1", "คอมเมนต์
 # flash-lite often closes with a Thai question word and no "?"
 QUESTION_END = re.compile(r"(\?|ไหม|มั้ย|ยังไง|อย่างไร|หรือไม่|บ้าง|อะไร|ไหน|เปล่า)\s*(คะ|ครับ|นะ|จ๊ะ)?\s*\??\s*$")
 
-TALK_SYSTEM = SYSTEM.replace("ความยาวรวมไม่เกิน 500 ตัวอักษร ", "") + (
-    " ใส่มุมมองของเพจเอง (แง่คิด ข้อควรทำ ข้อไม่ควรทำ) ที่ใช้ได้จริงในชีวิตประจำวัน "
-    "ห้ามแต่งข้อเท็จจริงที่ไม่มีในข่าว "
+TEXT_SYSTEM = SYSTEM.replace("ความยาวรวมไม่เกิน 500 ตัวอักษร ", "") + (
+    " ห้ามแต่งข้อเท็จจริงที่ไม่มีในข่าว "
     "คำถามปิดท้ายต้องเป็นคำถามปลายเปิดถามความเห็นจริง ลงท้ายด้วยเครื่องหมาย ? "
     "ห้ามขอให้พิมพ์ตัวเลข ห้ามชวนแชร์ ห้ามชวนแท็กเพื่อน "
     "ผู้ต้องหาในคดียังไม่ถูกศาลตัดสิน ห้ามสรุปว่าเขาผิด ใช้คำว่า ถูกกล่าวหา หรือ ถูกจับกุม "
-    "และให้แง่คิดเป็นบทเรียนทั่วไปสำหรับผู้อ่าน ไม่ใช่การตัดสินตัวบุคคล "
     "เรียกผู้อ่านว่า คุณ"
 )
 
@@ -317,92 +355,60 @@ def validate_text(text: str, min_chars: int, max_chars: int) -> str:
     return text
 
 
-def _gemini_text(prompt: str, min_chars: int, max_chars: int) -> str:
+def _gemini_text(prompt: str, min_chars: int, max_chars: int, max_tokens: int = 4096) -> str:
     """One Gemini call, one retry on a rejected draft."""
     from gen_predict import call_gemini
     for attempt in (1, 2):
         try:
-            return validate_text(call_gemini(prompt, TALK_SYSTEM), min_chars, max_chars)
+            return validate_text(call_gemini(prompt, TEXT_SYSTEM, max_tokens), min_chars, max_chars)
         except RuntimeError as exc:
             if attempt == 2:
                 raise
             print(f"[NEWS] draft rejected, retrying: {exc}")
 
 
-WEEK_ITEMS = 5
-WEEK_CANDIDATES = 12  # Gemini merges same-story duplicates (one case = several /api/hot items) down to WEEK_ITEMS
+def pick_hone(items: list[dict], today: date) -> dict | None:
+    """Today's episode write-up: published 12:00-20:59 Bangkok today and reads like the show; longest wins."""
+    def ok(it):
+        t = datetime.fromtimestamp(it["public_date"], BANGKOK)
+        return t.date() == today and 12 <= t.hour <= 20 and any(k in it["body"] for k in HONE_MARKERS)
+    return max((it for it in items if ok(it)), key=lambda it: len(it["body"]), default=None)
 
 
-def rank_week(stories: list[dict], scores: dict[str, float], n: int = 5) -> list[dict]:
-    """Top n stories by our Page's score for them; unscored ones keep /api/hot order after."""
-    order = {s["id"]: i for i, s in enumerate(stories)}
-    return sorted(stories, key=lambda s: (-scores.get(s["id"], -1), order[s["id"]]))[:n]
-
-
-def week_scores() -> dict[str, float]:
-    """video_id -> views + 5*(comments+shares) of our hot posts in the last 7 days (fb_post_stats)."""
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT to_regclass('fb_post_stats')")
-        if cur.fetchone()[0] is None:
-            return {}
-        cur.execute(
-            "SELECT t.video_id, COALESCE(s.views,0) + 5*(COALESCE(s.comments,0) + COALESCE(s.shares,0)) "
-            "FROM fb_text_posts t JOIN fb_post_stats s ON s.post_id = t.post_id "
-            "WHERE t.kind = 'hot' AND t.posted_at > now() - interval '7 days'")
-        return {vid: float(score) for vid, score in cur.fetchall()}
-
-
-def build_week_prompt(stories: list[dict], start: date, end: date) -> str:
-    span = f"{start.day} {THAI_MONTHS_REV[start.month]} – {end.day} {THAI_MONTHS_REV[end.month]}"
-    lines = [f"ข่าวเด่นประจำสัปดาห์ เรียงจากยอดนิยม (ห้ามลอกคำ ให้สรุปใหม่) เลือกมา {WEEK_ITEMS} เรื่องที่ไม่ซ้ำกัน "
-             "ข่าวหลายข่าวที่เป็นเรื่องเดียวกันหรือมีบุคคลเดียวกันให้รวมเป็นข้อเดียว "
-             "ห้ามมีชื่อบุคคลหรือคดีเดียวกันเกิน 1 ข้อ:"]
-    for i, s in enumerate(stories, 1):
-        lines += [f"ข่าว {i}: {s['title']}", f"เนื้อหา: {(s.get('body') or '')[:500]}", ""]
-    lines += [
-        "รูปแบบผลลัพธ์ที่ต้องส่งกลับ (แทนที่ <...> ด้วยข้อความของคุณ ส่วนที่ไม่ใช่ <...> ให้คงไว้ตามนี้):",
-        "",
-        f"📅 สรุปข่าวร้อนสัปดาห์นี้ สำหรับคนตกข่าว ({span})",
-        "",
-    ]
-    for i in range(WEEK_ITEMS):
-        lines += [f"{DIGIT_EMOJI[i]} <หัวข่าว {i + 1} สั้น ๆ 1 บรรทัด>",
-                  "→ <สรุปว่าเกิดอะไรขึ้น 1–2 ประโยค>",
-                  "💡 แง่คิด: <บทเรียนจากข่าวนี้ 1 ประโยค>", ""]
-    lines += [
-        "✅ ควรทำ",
-        "• <ข้อควรทำจากข่าวสัปดาห์นี้ 1>",
-        "• <ข้อควรทำ 2>",
-        "• <ข้อควรทำ 3>",
-        "❌ ไม่ควรทำ",
-        "• <ข้อไม่ควรทำ 1>",
-        "• <ข้อไม่ควรทำ 2>",
-        "• <ข้อไม่ควรทำ 3>",
-        "",
-        "<คำถามปลายเปิด 1 ประโยค ถามว่าข่าวไหนสัปดาห์นี้ที่คุณคิดว่าใกล้ตัวที่สุด และเพราะอะไร ลงท้ายด้วย ?>",
-        "#สรุปข่าว #ข่าวประจำสัปดาห์ #สรุปข่าวร้อนใน1นาที",
-    ]
-    return "\n".join(lines)
-
-
-def build_talk_prompt(story: dict) -> str:
-    tag = CATEGORY_TAGS.get(story.get("category", ""), "#ข่าวสังคม")
+def build_hone_prompt(story: dict) -> str:
+    # style modelled on a viral page recap of the 2026-10-05 episode (2.5k reactions, 6k shares):
+    # drama hook headline (first 2 lines show before "ดูเพิ่มเติม": shock number + the line people quote),
+    # story told in 🔵 chapters, every detail kept as ◼️ bullets, quotes kept
     return "\n".join([
-        "ข่าวต้นฉบับ (ห้ามลอกคำ ให้เขียนใหม่):",
+        "บทความรายการโหนกระแสวันนี้ (ห้ามลอกคำ ให้เขียนใหม่ทั้งหมดด้วยสำนวนของคุณ):",
         f"หัวข้อ: {story['title']}",
         f"เนื้อหา: {story['body']}",
         "",
+        "เล่าใหม่เป็นเรื่องเล่าที่ลุ้นเหมือนดูซีรีส์ ให้คนที่ไม่ได้ดูรายการรู้เรื่องครบเหมือนนั่งดูเอง "
+        "ห้ามตัดรายละเอียดใดทิ้ง ต้องครบทุกประเด็น ทุกชื่อ ฉายา อายุ ตัวเลข วันที่ สถานที่ จำนวนเงิน "
+        "ลำดับเหตุการณ์ คำถามของพิธีกร โฟนอิน หลักฐาน และคำชี้แจงของทุกฝ่าย "
+        "คำพูดเด็ดของบุคคลในเรื่องให้ยกมาในเครื่องหมาย \"...\" คำสำคัญให้ใส่ในเครื่องหมาย \"...\" "
+        "ห้ามแต่งเพิ่มสิ่งที่ไม่มีในเนื้อหา ทุกเรื่องที่เป็นคำกล่าวหาให้ใช้คำว่า อ้างว่า "
+        "ห้ามตัดสินเองว่าฝ่ายไหนผิด ถ้าไม่มีคำชี้แจงของอีกฝ่ายในเนื้อหา ให้เขียนว่า ยังไม่มีคำชี้แจง "
+        "ห้ามเขียนว่าเป็นการสรุปรายการ",
         "รูปแบบผลลัพธ์ที่ต้องส่งกลับ (แทนที่ <...> ด้วยข้อความของคุณ ส่วนที่ไม่ใช่ <...> ให้คงไว้ตามนี้):",
         "",
-        "📌 <ข้อเท็จจริงสำคัญของข่าว 1 บรรทัด มีตัวเลขถ้ามี>",
-        "<สรุปสั้น 1–2 ประโยค>",
+        "📣 <พาดหัว 1–2 ประโยค เปิดด้วยการเปรียบเทียบที่ดึงคน เช่น ยิ่งกว่าละคร ยิ่งกว่าซีรีส์ "
+        "บอกความขัดแย้งหลักแบบสั้นแรง มีตัวเลขที่ช็อกที่สุดของเรื่อง (เงิน เวลา จำนวน) "
+        "และปิดด้วยความคืบหน้าล่าสุด ลงท้ายด้วย !>",
+        "💬 \"<คำพูดที่สะเทือนใจหรือเดือดที่สุดในเรื่อง ยกมาตามเนื้อหา>\" — <ใครพูด>",
         "",
-        "💡 แง่คิด: <บทเรียนจากข่าวนี้ 1 ประโยค>",
-        "✅ ควรทำ: <ข้อ 1> / <ข้อ 2>",
-        "❌ ไม่ควรทำ: <ข้อ 1> / <ข้อ 2>",
+        "🔵 <ชื่อช่วงที่ 1: ปูมหลังตัวละคร>",
+        "◼️ <รายละเอียดทีละประเด็น ประเด็นละ 1–3 ประโยค ครบทุกข้อ>",
         "",
-        "<คำถามปลายเปิดถามความเห็นเกี่ยวกับข่าวนี้ 1 ประโยค ลงท้ายด้วย ?>",
-        f"#แง่คิดจากข่าว {tag}",
+        "🔵 <ชื่อช่วงถัดไปแบบมีสีสัน เช่น จุดเริ่มต้นรอยร้าว / นาทีระทึก / ความจริงที่ช็อก>",
+        "◼️ <...>",
+        "",
+        "(แบ่ง 4–7 ช่วงตามลำดับเรื่อง ช่วงคำชี้แจงหรือโฟนอินของอีกฝ่ายต้องแยกเป็นช่วงของตัวเอง "
+        "และช่วงสุดท้ายคือความคืบหน้าล่าสุดหรือสิ่งที่หน่วยงานจะทำต่อ)",
+        "",
+        "<คำถามปลายเปิด 1 ประโยค ให้ผู้อ่านคิดว่าถ้าเป็นตัวเองหรือคนในบ้านจะทำอย่างไร หรือเห็นด้วยกับฝ่ายไหน ลงท้ายด้วย ?>",
+        "#โหนกระแส <แฮชแท็กคำสำคัญของเรื่อง 1–2 คำ ไม่มีเว้นวรรคในแฮชแท็ก>",
     ])
 
 
@@ -783,58 +789,32 @@ def run_gold(dry_run: bool = False) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-def run_week(dry_run: bool = False) -> dict:
-    """Sunday recap: the week's 5 best-performing hot stories -> แง่คิด + ควรทำ/ไม่ควรทำ, text only, no link."""
+def run_hone(dry_run: bool = False) -> dict:
+    """Daily summary of today's โหนกระแส episode from the honekrasae.com write-up; link in comment."""
     try:
         ensure_table()
-        end = datetime.now(BANGKOK).date()
-        year, week, _ = end.isocalendar()
-        key = f"{year}-W{week:02d}"
-        if already_posted(key, "week"):
-            return {"status": "skipped", "reason": "already_posted", "week": key}
-        stories = [s for s in fetch_hot(168, 100) if (s.get("body") or "").strip()]
-        if len(stories) < WEEK_ITEMS:
-            return {"status": "skipped", "reason": "too_few_stories", "week": key}
-        top = rank_week(stories, week_scores(), WEEK_CANDIDATES)
-        print("[NEWS] week: " + " | ".join(s["title"] for s in top))
-        message = _gemini_text(build_week_prompt(top, end - timedelta(days=6), end), 400, 1800)
-        print(message)
-        if dry_run:
-            return {"status": "dry_run", "week": key, "video_ids": [s["id"] for s in top], "message": message}
-        from facebook import post_text_to_facebook
-        post_id = post_text_to_facebook(message)["id"]
-        mark_posted(key, "week", post_id)
-        return {"status": "ok", "week": key, "post_id": post_id}
-    except Exception as exc:
-        print(f"[NEWS] week error: {exc}")
-        return {"status": "error", "error": str(exc)}
-
-
-def run_talk(hours: int = 24, dry_run: bool = False) -> dict:
-    """Daily แง่คิด post on one hot story not yet used by talk or the photo hot lane."""
-    try:
-        ensure_table()
-        story = next((s for s in fetch_hot(hours, 20)
-                      if (s.get("body") or "").strip()
-                      and not already_posted(s["id"], "talk") and not already_posted(s["id"], "hot")), None)
+        today = datetime.now(BANGKOK).date()
+        story = pick_hone(fetch_hone(), today)
         if story is None:
-            return {"status": "skipped", "reason": "no_new_story"}
-        print(f"[NEWS] talk: {story['id']} {story['title']}")
-        message = _gemini_text(build_talk_prompt(story), 150, 800)
+            return {"status": "skipped", "reason": "no_episode"}
+        if already_posted(story["id"], "hone"):
+            return {"status": "skipped", "reason": "already_posted", "id": story["id"]}
+        print(f"[NEWS] hone: {story['id']} {story['title']}")
+        message = _gemini_text(build_hone_prompt(story), 800, 12000, max_tokens=16384)
         print(message)
         if dry_run:
-            return {"status": "dry_run", "video_id": story["id"], "message": message}
-        post_id = _publish(message, f"อ่านข่าวเต็ม 👉 {story['url']}")
-        mark_posted(story["id"], "talk", post_id)
-        return {"status": "ok", "video_id": story["id"], "post_id": post_id}
+            return {"status": "dry_run", "id": story["id"], "message": message}
+        post_id = _publish(message, f"ที่มา: รายการโหนกระแส 👉 {story['url']}")
+        mark_posted(story["id"], "hone", post_id)
+        return {"status": "ok", "id": story["id"], "post_id": post_id}
     except Exception as exc:
-        print(f"[NEWS] talk error: {exc}")
+        print(f"[NEWS] hone error: {exc}")
         return {"status": "error", "error": str(exc)}
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", choices=["hot", "digest", "lotto", "pm25", "gold", "week", "talk"], required=True)
+    ap.add_argument("--kind", choices=["hot", "digest", "lotto", "pm25", "gold", "hone"], required=True)
     ap.add_argument("--hours", type=int, default=None)
     ap.add_argument("--label", default="สรุปข่าวเช้า")
     ap.add_argument("--dry-run", action="store_true")
@@ -847,10 +827,8 @@ if __name__ == "__main__":
         res = run_pm25(a.dry_run)
     elif a.kind == "gold":
         res = run_gold(a.dry_run)
-    elif a.kind == "week":
-        res = run_week(a.dry_run)
-    elif a.kind == "talk":
-        res = run_talk(a.hours or 24, a.dry_run)
+    elif a.kind == "hone":
+        res = run_hone(a.dry_run)
     else:
         res = run_lotto(a.dry_run)
     res["ran_at"] = datetime.now().isoformat()

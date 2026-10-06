@@ -251,7 +251,7 @@ def format_analysis_for_prompt(a: dict, rows: list[dict]) -> str:
 
 # ── Gemini Integration ─────────────────────────────────────────────────────────
 
-def call_gemini(prompt: str, system: str) -> str:
+def call_gemini(prompt: str, system: str, max_tokens: int = 4096) -> str:
     """Call Gemini 2.5 Flash Lite and return the generated text."""
     from google import genai
     from google.genai import types
@@ -273,7 +273,7 @@ def call_gemini(prompt: str, system: str) -> str:
             system_instruction=system,
             temperature=0.85,
             top_p=0.9,
-            max_output_tokens=4096,
+            max_output_tokens=max_tokens,
         ),
     ):
         token = chunk.text or ""
