@@ -218,6 +218,10 @@ async def _scheduled_news_hone() -> None:
     await _scheduled_news("hone")
 
 
+async def _scheduled_news_flash() -> None:
+    await _scheduled_news("flash")
+
+
 async def _scheduled_traffic() -> None:
     # no retry loop: the next tick is the retry
     print(f"[SCHEDULER] traffic starting {datetime.now().isoformat()}")
@@ -263,6 +267,8 @@ def register_jobs(scheduler) -> None:
         # write-up lands ~14:00-17:00 after the noon live; 20:10 catches a late one (dedupe makes it a no-op otherwise)
         ("news_hone",      _scheduled_news_hone,           {"hour": 17, "minute": 40}),
         ("news_hone_late", _scheduled_news_hone,           {"hour": 20, "minute": 10}),
+        # honekrasae ข่าวด่วน: ~2-5 stories/day, one per hourly check (:25 stays clear of hot's :00/:30)
+        ("news_flash",     _scheduled_news_flash,          {"hour": "7-22", "minute": 25}),
         ("traffic",        _scheduled_traffic,             {"minute": f"*/{TRAFFIC_INTERVAL_MIN}", "hour": TRAFFIC_HOURS}),
     ]
     # Deploy-safe: the scheduler posts to the real Page, so the news jobs stay
@@ -372,6 +378,12 @@ async def trigger_news_gold(
 async def trigger_news_hone(dry_run: bool = False, _: None = Depends(require_auth)):
     """Post today's โหนกระแส episode summary (honekrasae.com write-up) as a text post."""
     return await _news_endpoint("hone", dry_run)
+
+
+@router.post("/news/flash")
+async def trigger_news_flash(dry_run: bool = False, _: None = Depends(require_auth)):
+    """Post the newest unposted honekrasae ข่าวด่วน story (hone-style rewrite) with its photo."""
+    return await _news_endpoint("flash", dry_run)
 
 
 @router.post("/traffic/run")

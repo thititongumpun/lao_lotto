@@ -7,7 +7,7 @@ from PIL import Image
 
 import poster
 from news_post import (OG_IMAGE_RE, SOURCE_RE, affiliate_comment, build_digest_message, build_gold_message,
-                       build_lotto_message, build_pm25_message, crop_cover, parse_gold, parse_hone, pick_hone,
+                       build_lotto_message, build_pm25_message, crop_cover, parse_gold, parse_hone, pick_flash, pick_hone,
                        pick_pm25, reel_cover, unescape_title, validate_hot, validate_poster_plan,
                        validate_text)
 
@@ -100,6 +100,36 @@ def test_pick_hone():
     ]
     assert pick_hone(items, day)["id"] == "ep"
     assert pick_hone(items[:3], day) is None  # no episode today -> skip
+
+
+def test_pick_flash():
+    from datetime import datetime
+    from horoscope import BANGKOK
+    now = datetime.fromtimestamp(1791286500 + 1800, BANGKOK)  # 30 min after the newest
+    items = [
+        {"id": "old", "public_date": 1791286500 - 4 * 3600, "body": "ข่าว"},
+        {"id": "a", "public_date": 1791286440, "body": "ข่าว"},
+        {"id": "b", "public_date": 1791286500, "body": "ข่าว"},
+        {"id": "show", "public_date": 1791286500 + 60, "body": "เรื่องราวของโหนกระแสวันนี้"},  # hone lane's
+    ]
+    assert [it["id"] for it in pick_flash(items, now)] == ["b", "a"]
+
+
+def test_flash_photo():
+    import io, os, tempfile
+    import news_post
+    buf = io.BytesIO()
+    Image.new("RGB", (1200, 630), "blue").save(buf, "PNG")
+    resp = type("R", (), {"content": buf.getvalue(), "raise_for_status": lambda self: None})()
+    real, news_post.requests.get = news_post.requests.get, lambda *a, **k: resp
+    try:
+        out = os.path.join(tempfile.mkdtemp(), "f.jpg")
+        assert news_post.fetch_flash_photo({"image": "x"}, out) == out
+        assert Image.open(out).size == (1200, news_post.HONE_BANNER_TOP)
+        news_post.requests.get = lambda *a, **k: 1 / 0
+        assert news_post.fetch_flash_photo({"image": "x"}, out) is None  # never raises
+    finally:
+        news_post.requests.get = real
 
 
 def test_lotto():
@@ -267,6 +297,8 @@ if __name__ == "__main__":
     test_placeholder_leak()
     test_parse_hone()
     test_pick_hone()
+    test_pick_flash()
+    test_flash_photo()
     test_lotto()
     test_source_and_og()
     test_poster_plan()

@@ -11,9 +11,10 @@ cap on Meta One is never hit):
   pm25    — morning PM2.5 readings from Air4Thai, plus an optional affiliate comment
   gold    — goldtraders.or.th announce prices, plus an optional affiliate comment
   hone    — daily summary of today's โหนกระแส episode (honekrasae.com write-up), text only
+  flash   — hourly: newest honekrasae ข่าวด่วน story, hone-style rewrite + its photo (banner cropped)
 
 Run as a SHORT-LIVED subprocess (same contract as pipeline.py / horoscope.py):
-    python -m news_post --kind hot|digest|lotto|pm25|gold|hone [--hours N] [--label TEXT] [--dry-run]
+    python -m news_post --kind hot|digest|lotto|pm25|gold|hone|flash [--hours N] [--label TEXT] [--dry-run]
 Last stdout line is RESULT_SENTINEL + json; everything else is logs.
 """
 
@@ -111,6 +112,10 @@ HONE_URL = "https://www.honekrasae.com/group"
 HONE_SITE = "https://www.honekrasae.com/content/"
 # the show's write-ups are tagged either group; the text decides (see pick_hone)
 HONE_GROUPS = "โหนกระแส,ข่าวกำลังโหน"
+HONE_FLASH_URL = "https://www.honekrasae.com/category"
+HONE_FLASH_CAT = "ข่าวด่วน"
+FLASH_MAX_AGE_H = 3  # only stories this fresh; older ones are news someone already posted
+HONE_BANNER_TOP = 465  # their 1200x630 images carry a 2-line headline banner from y~470 down
 HONE_MARKERS = ("โหนกระแสวันนี้", "หนุ่ม กรรชัย", "ในรายการ", "โฟนอิน")
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130"}
 
@@ -161,16 +166,35 @@ def parse_hone(html: str) -> list[dict]:
         body = re.sub(r"<[^>]+>", "\n", detail)
         body = "\n".join(l.strip() for l in unescape(body).splitlines() if l.strip())
         items.append({"id": obj["id"], "title": (obj.get("title") or "").strip(), "url": HONE_SITE + obj["id"],
-                      "public_date": int(obj["public_date"]), "body": body})
+                      "public_date": int(obj["public_date"]), "body": body, "image": obj.get("image_url") or ""})
     return items
 
 
-def fetch_hone() -> list[dict]:
-    resp = requests.get(HONE_URL, params={"groups": HONE_GROUPS, "title": "x"}, headers=UA, timeout=20)
+def fetch_hone(url: str = HONE_URL, params: dict | None = None) -> list[dict]:
+    resp = requests.get(url, params=params or {"groups": HONE_GROUPS, "title": "x"}, headers=UA, timeout=20)
     resp.raise_for_status()
     items = parse_hone(resp.text)
     print(f"[NEWS] honekrasae: {len(items)} item(s)")
     return items
+
+
+def fetch_flash_photo(story: dict, out_path: str) -> str | None:
+    """honekrasae image with its headline banner cropped off (logo kept as credit). Never raises."""
+    try:
+        import io
+
+        from PIL import Image
+
+        resp = requests.get(story["image"], headers=UA, timeout=20)
+        resp.raise_for_status()
+        im = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        if im.size == (1200, 630):
+            im = im.crop((0, 0, 1200, HONE_BANNER_TOP))
+        im.save(out_path, "JPEG", quality=90)
+        return out_path
+    except Exception as exc:
+        print(f"[NEWS] flash photo failed, posting text: {exc}")
+        return None
 
 
 def fetch_source_photo(story: dict) -> tuple[bytes, str]:
@@ -384,12 +408,20 @@ def pick_hone(items: list[dict], today: date) -> dict | None:
     return max((it for it in items if ok(it)), key=lambda it: len(it["body"]), default=None)
 
 
-def build_hone_prompt(story: dict) -> str:
+def pick_flash(items: list[dict], now: datetime) -> list[dict]:
+    """ข่าวด่วน candidates, newest first: published within FLASH_MAX_AGE_H and not a show write-up (hone lane's)."""
+    def ok(it):
+        age_h = (now.timestamp() - it["public_date"]) / 3600
+        return 0 <= age_h <= FLASH_MAX_AGE_H and not any(k in it["body"] for k in HONE_MARKERS)
+    return sorted((it for it in items if ok(it)), key=lambda it: it["public_date"], reverse=True)
+
+
+def build_hone_prompt(story: dict, intro: str = "บทความรายการโหนกระแสวันนี้", tag: str = "#โหนกระแส") -> str:
     # style modelled on a viral page recap of the 2026-10-05 episode (2.5k reactions, 6k shares):
     # drama hook headline (first 2 lines show before "ดูเพิ่มเติม": shock number + the line people quote),
     # story told in 🔵 chapters, every detail kept as ◼️ bullets, quotes kept
     return "\n".join([
-        "บทความรายการโหนกระแสวันนี้ (ห้ามลอกคำ ให้เขียนใหม่ทั้งหมดด้วยสำนวนของคุณ):",
+        f"{intro} (ห้ามลอกคำ ให้เขียนใหม่ทั้งหมดด้วยสำนวนของคุณ):",
         f"หัวข้อ: {story['title']}",
         f"เนื้อหา: {story['body']}",
         "",
@@ -422,7 +454,7 @@ def build_hone_prompt(story: dict) -> str:
         "และช่วงสุดท้ายคือความคืบหน้าล่าสุดหรือสิ่งที่หน่วยงานจะทำต่อ)",
         "",
         "<คำถามปลายเปิด 1 ประโยค ให้ผู้อ่านคิดว่าถ้าเป็นตัวเองหรือคนในบ้านจะทำอย่างไร หรือเห็นด้วยกับฝ่ายไหน ลงท้ายด้วย ?>",
-        "#โหนกระแส <แฮชแท็กคำสำคัญของเรื่อง 1–2 คำ ไม่มีเว้นวรรคในแฮชแท็ก>",
+        f"{tag} <แฮชแท็กคำสำคัญของเรื่อง 1–2 คำ ไม่มีเว้นวรรคในแฮชแท็ก>",
     ])
 
 
@@ -831,9 +863,32 @@ def run_hone(dry_run: bool = False) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
+def run_flash(dry_run: bool = False) -> dict:
+    """Newest unposted honekrasae ข่าวด่วน story -> hone-style rewrite -> photo post (text if the photo fails)."""
+    try:
+        ensure_table()
+        items = pick_flash(fetch_hone(HONE_FLASH_URL, {"c": HONE_FLASH_CAT}), datetime.now(BANGKOK))
+        story = next((s for s in items if not already_posted(s["id"], "flash") and not already_posted(s["id"], "hone")), None)
+        if story is None:
+            return {"status": "skipped", "reason": "no_new_story"}
+        print(f"[NEWS] flash: {story['id']} {story['title']}")
+        message = _gemini_text(build_hone_prompt(story, "ข่าวด่วนวันนี้", "#ข่าวด่วน"), 300, 12000, max_tokens=16384,
+                               model=os.getenv("HONE_GEMINI_MODEL") or None, temperature=0.4, attempts=3)
+        print(message)
+        image = fetch_flash_photo(story, f"/tmp/flash_{story['id']}.jpg") if story["image"] else None
+        if dry_run:
+            return {"status": "dry_run", "id": story["id"], "image": image, "message": message}
+        post_id = _publish(message, f"ที่มา: โหนกระแส 👉 {story['url']}", image)
+        mark_posted(story["id"], "flash", post_id)
+        return {"status": "ok", "id": story["id"], "post_id": post_id, "photo": bool(image)}
+    except Exception as exc:
+        print(f"[NEWS] flash error: {exc}")
+        return {"status": "error", "error": str(exc)}
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", choices=["hot", "digest", "lotto", "pm25", "gold", "hone"], required=True)
+    ap.add_argument("--kind", choices=["hot", "digest", "lotto", "pm25", "gold", "hone", "flash"], required=True)
     ap.add_argument("--hours", type=int, default=None)
     ap.add_argument("--label", default="สรุปข่าวเช้า")
     ap.add_argument("--dry-run", action="store_true")
@@ -848,6 +903,8 @@ if __name__ == "__main__":
         res = run_gold(a.dry_run)
     elif a.kind == "hone":
         res = run_hone(a.dry_run)
+    elif a.kind == "flash":
+        res = run_flash(a.dry_run)
     else:
         res = run_lotto(a.dry_run)
     res["ran_at"] = datetime.now().isoformat()
