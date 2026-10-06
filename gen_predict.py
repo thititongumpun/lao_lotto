@@ -251,7 +251,8 @@ def format_analysis_for_prompt(a: dict, rows: list[dict]) -> str:
 
 # ── Gemini Integration ─────────────────────────────────────────────────────────
 
-def call_gemini(prompt: str, system: str, max_tokens: int = 4096, model: str | None = None) -> str:
+def call_gemini(prompt: str, system: str, max_tokens: int = 4096, model: str | None = None,
+                temperature: float = 0.85) -> str:
     """Call Gemini (GEMINI_MODEL unless a lane passes its own model) and return the generated text."""
     from google import genai
     from google.genai import types
@@ -271,7 +272,7 @@ def call_gemini(prompt: str, system: str, max_tokens: int = 4096, model: str | N
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.85,
+            temperature=temperature,
             top_p=0.9,
             max_output_tokens=max_tokens,
         ),

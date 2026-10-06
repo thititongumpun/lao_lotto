@@ -55,12 +55,21 @@ def test_garbled_text():
     ok = "เรื่องนี้ยาว " * 20 + "\nคุณคิดอย่างไร?"
     assert validate_text(ok, 50, 2000) == ok.strip()
     assert validate_text("ใช้ CIB และ สบส. " * 10 + "\nคุณคิดอย่างไร?", 50, 2000)  # spaced Latin is fine
-    for bad in ("พาหนocกลับ", "ทำުރร้าย"):
+    for bad in ("พาหนocกลับ", "ทำުރร้าย", "ขออนุญาطع่อสร้าง"):
         try:
             validate_text(ok.replace("ยาว", bad, 1), 50, 2000)
             raise AssertionError(bad)
         except RuntimeError as exc:
             assert "garbled" in str(exc), exc
+
+
+def test_placeholder_leak():
+    ok = "เรื่องนี้ยาว " * 20 + "\nคุณคิดอย่างไร?"
+    try:
+        validate_text("<ผู้ร้อง>ร้องเรียน " + ok, 50, 2000)
+        raise AssertionError("placeholder passed")
+    except RuntimeError as exc:
+        assert "placeholder" in str(exc), exc
 
 
 def test_parse_hone():
@@ -255,6 +264,7 @@ if __name__ == "__main__":
     test_validate_hot()
     test_validate_text()
     test_garbled_text()
+    test_placeholder_leak()
     test_parse_hone()
     test_pick_hone()
     test_lotto()

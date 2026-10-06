@@ -351,6 +351,9 @@ def validate_text(text: str, min_chars: int, max_chars: int) -> str:
     garbled = MIXED_SCRIPT.findall(text) + [c for c in text if c.isalpha() and not c.isascii() and not "\u0e00" <= c <= "\u0e7f"]
     if garbled:  # flash-lite sometimes drops Latin/other-script letters into Thai words ("พาหนocกลับ", "ทำުރร้าย")
         raise RuntimeError(f"text post has garbled letters {garbled}: {text!r}")
+    leak = re.findall(r"<[^<>\n]{1,40}>", text)
+    if leak:  # template slot copied into the post ("<ผู้ร้อง>ร้องเรียน")
+        raise RuntimeError(f"text post has template placeholders {leak}: {text!r}")
     bait = [w for w in BAIT_WORDS if w in text]
     if bait:
         raise RuntimeError(f"text post has engagement bait {bait}: {text!r}")
@@ -361,14 +364,14 @@ def validate_text(text: str, min_chars: int, max_chars: int) -> str:
 
 
 def _gemini_text(prompt: str, min_chars: int, max_chars: int, max_tokens: int = 4096,
-                 model: str | None = None) -> str:
-    """One Gemini call, one retry on a rejected draft."""
+                 model: str | None = None, temperature: float = 0.85, attempts: int = 2) -> str:
+    """Gemini call, retried on a rejected draft."""
     from gen_predict import call_gemini
-    for attempt in (1, 2):
+    for attempt in range(1, attempts + 1):
         try:
-            return validate_text(call_gemini(prompt, TEXT_SYSTEM, max_tokens, model), min_chars, max_chars)
+            return validate_text(call_gemini(prompt, TEXT_SYSTEM, max_tokens, model, temperature), min_chars, max_chars)
         except RuntimeError as exc:
-            if attempt == 2:
+            if attempt == attempts:
                 raise
             print(f"[NEWS] draft rejected, retrying: {exc}")
 
@@ -397,14 +400,15 @@ def build_hone_prompt(story: dict) -> str:
         "ห้ามแต่งเพิ่มสิ่งที่ไม่มีในเนื้อหา ทุกเรื่องที่เป็นคำกล่าวหาให้ใช้คำว่า อ้างว่า "
         "ห้ามตัดสินเองว่าฝ่ายไหนผิด ถ้าไม่มีคำชี้แจงของอีกฝ่ายในเนื้อหา ให้เขียนว่า ยังไม่มีคำชี้แจง "
         "ห้ามเขียนว่าเป็นการสรุปรายการ ห้ามขึ้นต้นชื่อช่วงด้วยคำว่า ช่วงที่ "
-        "คำพูดที่มีคนอื่นเล่าต่อว่าใครพูด ต้องระบุว่าใครอ้าง เช่น — เจ้าของศูนย์ (ตามที่คุณแม่อ้าง) "
+        "ในบรรทัด 💬 เท่านั้น ถ้าเป็นคำพูดที่คนอื่นเล่าต่อ ให้ระบุว่าใครอ้าง เช่น — เจ้าของศูนย์ (ตามที่คุณแม่อ้าง) "
+        "ส่วนในเนื้อเรื่องให้เขียนว่า ใครอ้างว่า หรือ ใครชี้แจงว่า ตามปกติ ห้ามใส่วงเล็บ (ตามที่...อ้าง) "
         "เขียนภาษาไทยล้วน ห้ามมีตัวอักษรภาษาอื่นปนในคำไทย",
         "รูปแบบผลลัพธ์ที่ต้องส่งกลับ (แทนที่ <...> ด้วยข้อความของคุณ ส่วนที่ไม่ใช่ <...> ให้คงไว้ตามนี้):",
         "",
         "📣 <ฮุกบรรทัดเดียว ไม่เกิน 70 ตัวอักษร ห้ามขึ้นต้นแบบรายงานข่าว เช่น คุณแม่อ้างว่า... "
         "ให้ขึ้นต้นด้วยภาพที่ช็อกที่สุดหรือความย้อนแย้งที่เจ็บที่สุดของเรื่อง (สิ่งที่สร้างมา vs สิ่งที่เจอ, คนใกล้ตัว vs สิ่งที่ทำ) "
-        "พร้อมตัวเลขที่ช็อก ใช้คำว่า <ผู้ร้อง>ร้อง (เช่น แม่ร้อง หนุ่มร้อง) หรือ ถูกกล่าวหา แทนการยืนยันข้อเท็จจริง ลงท้ายด้วย ! "
-        "ตัวอย่างโครงสร้าง (ห้ามลอกคำ): สร้าง X มากับมือ แต่ Y — <ผู้ร้อง>ร้อง Z>",
+        "พร้อมตัวเลขที่ช็อก ใช้คำว่า ร้อง ต่อท้ายผู้ร้องจริงในเรื่อง (เช่น แม่ร้อง หนุ่มร้อง) หรือ ถูกกล่าวหา แทนการยืนยันข้อเท็จจริง ลงท้ายด้วย ! "
+        "ตัวอย่างโครงสร้าง (ห้ามลอกคำ): สร้าง X มากับมือ แต่ Y — แม่ร้อง Z>",
         "<บรรทัดที่ 2 ไม่เกิน 120 ตัวอักษร: เกิดอะไรขึ้นโดยย่อ และความคืบหน้าล่าสุด ใช้คำว่า อ้างว่า>",
         "💬 \"<คำพูดที่สะเทือนใจหรือเดือดที่สุดในเรื่อง ยกมาตามเนื้อหา>\" — <ใครพูด และใครเป็นคนอ้าง ถ้าเป็นคำเล่าต่อ>",
         "",
@@ -813,7 +817,9 @@ def run_hone(dry_run: bool = False) -> dict:
         # HONE_GEMINI_MODEL switches only this lane (e.g. a stronger model for long full-detail rewrites)
         model = os.getenv("HONE_GEMINI_MODEL") or None
         print(f"[NEWS] hone model: {model or 'default'}")
-        message = _gemini_text(build_hone_prompt(story), 800, 12000, max_tokens=16384, model=model)
+        # long rewrite at 0.85 garbled a word with Arabic letters in 2 drafts running (2026-10-06): run cooler, 3 tries
+        message = _gemini_text(build_hone_prompt(story), 800, 12000, max_tokens=16384, model=model,
+                               temperature=0.4, attempts=3)
         print(message)
         if dry_run:
             return {"status": "dry_run", "id": story["id"], "message": message}
