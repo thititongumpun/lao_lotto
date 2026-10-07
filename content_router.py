@@ -267,7 +267,7 @@ def register_jobs(scheduler) -> None:
         # write-up lands ~14:00-17:00 after the noon live; 20:10 catches a late one (dedupe makes it a no-op otherwise)
         ("news_hone",      _scheduled_news_hone,           {"hour": 17, "minute": 40}),
         ("news_hone_late", _scheduled_news_hone,           {"hour": 20, "minute": 10}),
-        # honekrasae ข่าวด่วน: ~2-5 stories/day, one per hourly check (:25 stays clear of hot's :00/:30)
+        # honekrasae ดราม่า: one story per hourly check (:25 stays clear of hot's :00/:30)
         ("news_flash",     _scheduled_news_flash,          {"hour": "7-22", "minute": 25}),
         ("traffic",        _scheduled_traffic,             {"minute": f"*/{TRAFFIC_INTERVAL_MIN}", "hour": TRAFFIC_HOURS}),
     ]
@@ -382,7 +382,7 @@ async def trigger_news_hone(dry_run: bool = False, _: None = Depends(require_aut
 
 @router.post("/news/flash")
 async def trigger_news_flash(dry_run: bool = False, _: None = Depends(require_auth)):
-    """Post the newest unposted honekrasae ข่าวด่วน story (hone-style rewrite) with its photo."""
+    """Post the newest unposted honekrasae ดราม่า story (hone-style rewrite) with its photo."""
     return await _news_endpoint("flash", dry_run)
 
 

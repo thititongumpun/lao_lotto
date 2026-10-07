@@ -110,9 +110,9 @@ def test_pick_flash():
         {"id": "old", "public_date": 1791286500 - 4 * 3600, "body": "ข่าว"},
         {"id": "a", "public_date": 1791286440, "body": "ข่าว"},
         {"id": "b", "public_date": 1791286500, "body": "ข่าว"},
-        {"id": "show", "public_date": 1791286500 + 60, "body": "เรื่องราวของโหนกระแสวันนี้"},  # hone lane's
+        {"id": "show", "public_date": 1791286500 + 60, "body": "เรื่องราวของโหนกระแสวันนี้"},  # show write-ups allowed
     ]
-    assert [it["id"] for it in pick_flash(items, now)] == ["b", "a"]
+    assert [it["id"] for it in pick_flash(items, now)] == ["show", "b", "a"]
 
 
 def test_flash_photo():

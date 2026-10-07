@@ -11,7 +11,7 @@ cap on Meta One is never hit):
   pm25    — morning PM2.5 readings from Air4Thai, plus an optional affiliate comment
   gold    — goldtraders.or.th announce prices, plus an optional affiliate comment
   hone    — daily summary of today's โหนกระแส episode (honekrasae.com write-up), text only
-  flash   — hourly: newest honekrasae ข่าวด่วน story, hone-style rewrite + its photo (banner cropped)
+  flash   — hourly: newest honekrasae ดราม่า story, hone-style rewrite + its photo (banner cropped)
 
 Run as a SHORT-LIVED subprocess (same contract as pipeline.py / horoscope.py):
     python -m news_post --kind hot|digest|lotto|pm25|gold|hone|flash [--hours N] [--label TEXT] [--dry-run]
@@ -113,7 +113,7 @@ HONE_SITE = "https://www.honekrasae.com/content/"
 # the show's write-ups are tagged either group; the text decides (see pick_hone)
 HONE_GROUPS = "โหนกระแส,ข่าวกำลังโหน"
 HONE_FLASH_URL = "https://www.honekrasae.com/category"
-HONE_FLASH_CAT = "ข่าวด่วน"
+HONE_FLASH_CAT = "ดราม่า"
 FLASH_MAX_AGE_H = 3  # only stories this fresh; older ones are news someone already posted
 HONE_BANNER_TOP = 465  # their 1200x630 images carry a 2-line headline banner from y~470 down
 HONE_MARKERS = ("โหนกระแสวันนี้", "หนุ่ม กรรชัย", "ในรายการ", "โฟนอิน")
@@ -409,10 +409,10 @@ def pick_hone(items: list[dict], today: date) -> dict | None:
 
 
 def pick_flash(items: list[dict], now: datetime) -> list[dict]:
-    """ข่าวด่วน candidates, newest first: published within FLASH_MAX_AGE_H and not a show write-up (hone lane's)."""
+    """ดราม่า candidates, newest first: published within FLASH_MAX_AGE_H (show write-ups allowed; run_flash skips the hone-posted id)."""
     def ok(it):
         age_h = (now.timestamp() - it["public_date"]) / 3600
-        return 0 <= age_h <= FLASH_MAX_AGE_H and not any(k in it["body"] for k in HONE_MARKERS)
+        return 0 <= age_h <= FLASH_MAX_AGE_H
     return sorted((it for it in items if ok(it)), key=lambda it: it["public_date"], reverse=True)
 
 
@@ -864,7 +864,7 @@ def run_hone(dry_run: bool = False) -> dict:
 
 
 def run_flash(dry_run: bool = False) -> dict:
-    """Newest unposted honekrasae ข่าวด่วน story -> hone-style rewrite -> photo post (text if the photo fails)."""
+    """Newest unposted honekrasae ดราม่า story -> hone-style rewrite -> photo post (text if the photo fails)."""
     try:
         ensure_table()
         items = pick_flash(fetch_hone(HONE_FLASH_URL, {"c": HONE_FLASH_CAT}), datetime.now(BANGKOK))
@@ -872,7 +872,7 @@ def run_flash(dry_run: bool = False) -> dict:
         if story is None:
             return {"status": "skipped", "reason": "no_new_story"}
         print(f"[NEWS] flash: {story['id']} {story['title']}")
-        message = _gemini_text(build_hone_prompt(story, "ข่าวด่วนวันนี้", "#ข่าวด่วน"), 300, 12000, max_tokens=16384,
+        message = _gemini_text(build_hone_prompt(story, "ดราม่าวันนี้", "#ดราม่า"), 300, 12000, max_tokens=16384,
                                model=os.getenv("HONE_GEMINI_MODEL") or None, temperature=0.4, attempts=3)
         print(message)
         image = fetch_flash_photo(story, f"/tmp/flash_{story['id']}.jpg") if story["image"] else None
