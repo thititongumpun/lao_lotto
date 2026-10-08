@@ -230,16 +230,17 @@ def build_message(roads: list[dict], now: datetime, accidents: list[dict] = ()) 
     return "\n".join(lines)
 
 
-def build_card(roads: list[dict], now: datetime, out_path: str, accident: bool = False) -> str | None:
-    """4:5 photo card over a stock heavy/slow/accident scene. None -> text post."""
+def build_card(roads: list[dict], now: datetime, out_path: str, accidents: list[dict] = ()) -> str | None:
+    """4:5 photo card over a stock heavy/slow/accident scene; accidents as full-width rows on top. None -> text post."""
     try:
         import poster
         worst = roads[0]["traffic_level"]  # roads is severity-sorted
-        scene = "accident" if accident else worst if worst in CONGESTED else "slow"
-        return poster.card("การจราจรกรุงเทพฯ", f"อัปเดต {now:%H:%M} น. · ความเร็ว กม./ชม.",
-                           [(r["road_name"], f"{LABEL[r['traffic_level']]} {round(r['current_speed'])}",
-                             RGB[r["traffic_level"]]) for r in roads],
-                           out_path, accent=RGB["heavy" if accident else worst], bg=str(SCENE[scene]))
+        scene = "accident" if accidents else worst if worst in CONGESTED else "slow"
+        rows = [("", f"อุบัติเหตุ {a['place']}", RGB["heavy"]) for a in accidents]
+        rows += [(r["road_name"], f"{LABEL[r['traffic_level']]} {round(r['current_speed'])}", RGB[r["traffic_level"]])
+                 for r in roads[:MAX_ROADS - len(rows)]]  # ≤7 rows keeps them legible; caption lists every road
+        return poster.card("การจราจรกรุงเทพฯ", f"อัปเดต {now:%H:%M} น. · ความเร็ว กม./ชม.", rows,
+                           out_path, accent=RGB["heavy" if accidents else worst], bg=str(SCENE[scene]))
     except Exception as exc:
         print(f"[TRAFFIC] card failed, posting text: {exc}")
         return None
@@ -327,7 +328,7 @@ def run(dry_run: bool = False) -> dict:
                     "calls": calls}
         message = build_message(picked, now, accidents)
         print(message)
-        image = build_card(picked, now, "/tmp/card_traffic.jpg", accident=bool(accidents))
+        image = build_card(picked, now, "/tmp/card_traffic.jpg", accidents)
         if dry_run:
             return {"status": "dry_run", "message": message, "card": image, "signature": sig, "roads": roads,
                     "accidents": accidents, "segments": segs, "calls": calls}

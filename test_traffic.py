@@ -261,7 +261,7 @@ def test_accidents():
     msg = build_message(roads, traffic.datetime(2026, 10, 8, 8, 0), acc[:2])
     assert "⚠️ มีอุบัติเหตุที่ ถนนราชพฤกษ์-ถนนบรมราชชนนี 338, บางนา" in msg, msg
     out = "/tmp/card_traffic_acc_test.jpg"
-    assert traffic.build_card(roads, traffic.datetime(2026, 10, 8, 8, 0), out, accident=True) == out
+    assert traffic.build_card(roads, traffic.datetime(2026, 10, 8, 8, 0), out, acc) == out
     assert "โปรดเลี่ยงหรือเผื่อเวลาการเดินทาง" in msg
     assert "อุบัติเหตุ" not in build_message(roads, traffic.datetime(2026, 10, 8, 8, 0))
 
