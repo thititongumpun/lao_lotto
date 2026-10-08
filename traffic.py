@@ -322,12 +322,13 @@ def run(dry_run: bool = False) -> dict:
         picked = select(roads) or (roads[:3] if accidents else [])
         sig = signature(roads, accidents)
         if not picked:
-            res = {"status": "skipped", "reason": "no_congestion", "calls": calls}
+            res = {"status": "skipped", "reason": "no_congestion", "accidents": accidents, "calls": calls}
             if dry_run:  # diagnosable even when nothing is congested
                 res.update(roads=roads, segments=segs)
             return res
         if not dry_run and sig == last_sig and ago < REPEAT_AFTER_MIN:
-            return {"status": "skipped", "reason": "unchanged", "signature": sig, "calls": calls}
+            return {"status": "skipped", "reason": "unchanged", "signature": sig, "accidents": accidents,
+                    "calls": calls}
         message = build_message(picked, now, accidents)
         print(message)
         image = build_card(picked, now, "/tmp/card_traffic.jpg", accident=bool(accidents))
