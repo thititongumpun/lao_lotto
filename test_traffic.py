@@ -234,7 +234,28 @@ def test_build_card():
     assert os.path.getsize(out) > 10_000
 
 
+def test_accidents():
+    inc = lambda cat, frm, to="", i="x": {"properties": {"id": i, "iconCategory": cat, "from": frm, "to": to}}
+    js = {"incidents": [inc(1, "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338 (ทางหลวงหมายเลข 338)", "พุทธมณฑล", "a"),
+                        inc(6, "แยกดินแดง", i="jam"), inc(1, "", i="noplace"),
+                        inc(1, "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338", i="dup"),
+                        inc(1, "", "บางนา", i="b"), inc(1, "ลาดพร้าว", i="c"), inc(1, "สาทร", i="d")]}
+    acc = traffic.parse_accidents(js)
+    assert [a["id"] for a in acc] == ["a", "b", "c"], acc
+    assert acc[0]["place"] == "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338"
+    assert traffic.parse_accidents({}) == []
+    roads = [{"road": "ratchada", "traffic_level": "slow", "road_name": "รัชดาฯ", "current_speed": 25}]
+    assert signature(roads, acc[:1]) != signature(roads)
+    msg = build_message(roads, traffic.datetime(2026, 10, 8, 8, 0), acc[:2])
+    assert "⚠️ มีอุบัติเหตุที่ ถนนราชพฤกษ์-ถนนบรมราชชนนี 338, บางนา" in msg, msg
+    out = "/tmp/card_traffic_acc_test.jpg"
+    assert traffic.build_card(roads, traffic.datetime(2026, 10, 8, 8, 0), out, accident=True) == out
+    assert "โปรดเลี่ยงหรือเผื่อเวลาการเดินทาง" in msg
+    assert "อุบัติเหตุ" not in build_message(roads, traffic.datetime(2026, 10, 8, 8, 0))
+
+
 if __name__ == "__main__":
+    test_accidents()
     test_fetch_point_bad_payload()
     test_normalize()
     test_classify()

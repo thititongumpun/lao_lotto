@@ -12,6 +12,7 @@ Last stdout line is RESULT_SENTINEL + json; everything else is logs.
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
 from datetime import datetime
@@ -74,13 +75,19 @@ POINTS = [
     ]
 ]
 
+INCIDENT_URL = "https://api.tomtom.com/traffic/services/5/incidentDetails"
+# POINTS' bounding box padded ~3 km (≈1,600 km², API limit 10,000)
+BBOX = ",".join(f"{v:.3f}" for v in (min(p["lon"] for p in POINTS) - 0.03, min(p["lat"] for p in POINTS) - 0.03,
+                                     max(p["lon"] for p in POINTS) + 0.03, max(p["lat"] for p in POINTS) + 0.03))
+MAX_ACCIDENTS = 3
+
 LEVELS = ["heavy", "slow", "moderate", "free"]
 EMOJI = {"heavy": "🔴", "slow": "🟠", "moderate": "🟡", "free": "🟢"}
 LABEL = {"heavy": "รถติดหนัก", "slow": "ชะลอตัว", "moderate": "หนาแน่น", "free": "รถคล่อง"}
 CONGESTED = ("heavy", "slow")
 RGB = {"heavy": (210, 30, 30), "slow": (240, 110, 20), "moderate": (220, 170, 0), "free": (40, 160, 70)}
 # generated once with gen_image.generate_image_klein (flux-2-klein-4b); posts only fire on heavy/slow
-SCENE = {l: Path(__file__).parent / "assets" / f"traffic_{l}.jpg" for l in CONGESTED}
+SCENE = {l: Path(__file__).parent / "assets" / f"traffic_{l}.jpg" for l in (*CONGESTED, "accident")}
 
 
 # ── TomTom ─────────────────────────────────────────────────────────────────────
@@ -141,6 +148,43 @@ def fetch_point(p: dict, key: str, collected_at: str) -> dict | None:
     return seg
 
 
+def parse_accidents(js: dict) -> list[dict]:
+    out, seen = [], set()
+    for inc in js.get("incidents") or []:
+        pr = inc.get("properties") or {}
+        if pr.get("iconCategory") != 1:  # 1 = Accident
+            continue
+        # TomTom names run long: "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338 (ทางหลวงหมายเลข 338)" -> drop the "(...)"
+        place = re.sub(r"\s*\(.*?\)", "", pr.get("from") or pr.get("to") or "").strip()
+        if not place or place in seen:
+            continue
+        seen.add(place)
+        out.append({"id": str(pr.get("id") or place), "place": place})
+    return out[:MAX_ACCIDENTS]
+
+
+def fetch_accidents(key: str) -> list[dict]:
+    """Current accidents in BBOX. Additive: any failure but 403/429 -> [] so the flow report still posts."""
+    try:
+        r = requests.get(INCIDENT_URL, params={
+            "key": key, "bbox": BBOX, "categoryFilter": "1", "timeValidityFilter": "present",
+            "language": "th-TH",
+            "fields": "{incidents{properties{id,iconCategory,from,to}}}"}, timeout=10)
+    except requests.RequestException as exc:
+        print(f"[TRAFFIC] incidents failed: {type(exc).__name__}")
+        return []
+    if r.status_code in (403, 429):
+        raise RuntimeError(f"tomtom {r.status_code}")
+    if r.status_code != 200:
+        print(f"[TRAFFIC] incidents failed: http {r.status_code}")
+        return []
+    try:
+        return parse_accidents(r.json())
+    except (ValueError, TypeError, AttributeError):
+        print("[TRAFFIC] incidents failed: bad payload")
+        return []
+
+
 # ── Aggregate ──────────────────────────────────────────────────────────────────
 
 def classify(r: float) -> str:
@@ -171,29 +215,34 @@ def select(roads: list[dict]) -> list[dict]:
     return roads[:max(3, len(picked))]  # roads is severity-sorted: pad with next-worst
 
 
-def signature(roads: list[dict]) -> str:
-    return ",".join(sorted(f"{r['road']}:{r['traffic_level']}" for r in roads
-                           if r["traffic_level"] in CONGESTED))
+def signature(roads: list[dict], accidents: list[dict] = ()) -> str:
+    # a new accident id is a change, so it posts without waiting REPEAT_AFTER_MIN
+    return ",".join(sorted([f"{r['road']}:{r['traffic_level']}" for r in roads
+                            if r["traffic_level"] in CONGESTED] + [f"acc:{a['id']}" for a in accidents]))
 
 
-def build_message(roads: list[dict], now: datetime) -> str:
+def build_message(roads: list[dict], now: datetime, accidents: list[dict] = ()) -> str:
     lines = ["🚗 รายงานการจราจรกรุงเทพฯ", ""]
     for r in roads:
         l = r["traffic_level"]
         lines.append(f"{EMOJI[l]} {r['road_name']} {LABEL[l]} ความเร็วราว {round(r['current_speed'])} กม./ชม.")
+    if accidents:
+        lines += ["", f"⚠️ มีอุบัติเหตุที่ {', '.join(a['place'] for a in accidents)}",
+                  "โปรดเลี่ยงหรือเผื่อเวลาการเดินทาง"]
     lines += ["", f"อัปเดตล่าสุด {now:%H:%M} น.", "สรุปข่าวร้อนใน 1 นาทีการจราจร"]
     return "\n".join(lines)
 
 
-def build_card(roads: list[dict], now: datetime, out_path: str) -> str | None:
-    """4:5 photo card over a stock heavy/slow scene. None -> text post."""
+def build_card(roads: list[dict], now: datetime, out_path: str, accident: bool = False) -> str | None:
+    """4:5 photo card over a stock heavy/slow/accident scene. None -> text post."""
     try:
         import poster
         worst = roads[0]["traffic_level"]  # roads is severity-sorted
+        scene = "accident" if accident else worst if worst in CONGESTED else "slow"
         return poster.card("การจราจรกรุงเทพฯ", f"อัปเดต {now:%H:%M} น. · ความเร็ว กม./ชม.",
                            [(r["road_name"], f"{LABEL[r['traffic_level']]} {round(r['current_speed'])}",
                              RGB[r["traffic_level"]]) for r in roads],
-                           out_path, accent=RGB[worst], bg=str(SCENE[worst]))
+                           out_path, accent=RGB["heavy" if accident else worst], bg=str(SCENE[scene]))
     except Exception as exc:
         print(f"[TRAFFIC] card failed, posting text: {exc}")
         return None
@@ -250,7 +299,7 @@ def run(dry_run: bool = False) -> dict:
         now = datetime.now(BANGKOK)
         day = now.date()
         used = used_today(day)
-        if used + len(POINTS) > DAILY_CAP:
+        if used + len(POINTS) + 1 > DAILY_CAP:  # +1 incidents call
             return {"status": "skipped", "reason": "budget_exhausted", "used": used}
         last_sig, ago = last_post()
         if not dry_run and ago is not None and ago < MIN_GAP_MIN:
@@ -263,13 +312,15 @@ def run(dry_run: bool = False) -> dict:
                 s = fetch_point(p, key, collected_at)
                 if s:
                     segs.append(s)
+            calls += 1
+            accidents = fetch_accidents(key)
         finally:
             add_usage(day, calls)
         if not segs:
             raise RuntimeError("no valid segments")
         roads = aggregate(segs)
-        picked = select(roads)
-        sig = signature(roads)
+        picked = select(roads) or (roads[:3] if accidents else [])
+        sig = signature(roads, accidents)
         if not picked:
             res = {"status": "skipped", "reason": "no_congestion", "calls": calls}
             if dry_run:  # diagnosable even when nothing is congested
@@ -277,12 +328,12 @@ def run(dry_run: bool = False) -> dict:
             return res
         if not dry_run and sig == last_sig and ago < REPEAT_AFTER_MIN:
             return {"status": "skipped", "reason": "unchanged", "signature": sig, "calls": calls}
-        message = build_message(picked, now)
+        message = build_message(picked, now, accidents)
         print(message)
-        image = build_card(picked, now, "/tmp/card_traffic.jpg")
+        image = build_card(picked, now, "/tmp/card_traffic.jpg", accident=bool(accidents))
         if dry_run:
             return {"status": "dry_run", "message": message, "card": image, "signature": sig, "roads": roads,
-                    "segments": segs, "calls": calls}
+                    "accidents": accidents, "segments": segs, "calls": calls}
         from facebook import post_photo_to_facebook, post_text_to_facebook
         key = f"{now:%Y-%m-%dT%H:%M}|{sig}"
         # row first: if FB accepts but we time out/crash, the next tick waits a gap instead of reposting
