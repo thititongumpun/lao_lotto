@@ -235,15 +235,27 @@ def test_build_card():
 
 
 def test_accidents():
-    inc = lambda cat, frm, to="", i="x": {"properties": {"id": i, "iconCategory": cat, "from": frm, "to": to}}
-    js = {"incidents": [inc(1, "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338 (ทางหลวงหมายเลข 338)", "พุทธมณฑล", "a"),
-                        inc(6, "แยกดินแดง", i="jam"), inc(1, "", i="noplace"),
-                        inc(1, "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338", i="dup"),
-                        inc(1, "", "บางนา", i="b"), inc(1, "ลาดพร้าว", i="c"), inc(1, "สาทร", i="d")]}
-    acc = traffic.parse_accidents(js)
-    assert [a["id"] for a in acc] == ["a", "b", "c"], acc
-    assert acc[0]["place"] == "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338"
-    assert traffic.parse_accidents({}) == []
+    now = traffic.datetime(2026, 10, 8, 18, 10)
+
+    def ev(eid, title, start="2026-10-08 18:00:00", stop="2026-10-08 19:00:00", icon="accident",
+           lat="13.7283", lon="100.4805"):
+        return {"eid": eid, "title": title, "icon": icon, "start": start, "stop": stop,
+                "latitude": lat, "longitude": lon}
+
+    events = [ev("1", "อุบัติเหตุ ถนนเพชรเกษม 69", start="2026-10-08 18:05:00"),
+              ev("2", "รถติด ถนนสาทร", icon="traffic"),                                 # not an accident
+              ev("3", "อุบัติเหตุ ถนนบางนา", stop="2026-10-08 18:00:00"),                # expired
+              ev("4", "อุบัติเหตุ ถนนมิตรภาพ", lat="14.97", lon="102.10"),                # outside BBOX (Korat)
+              ev("5", "อุบัติเหตุ ถนนเพชรเกษม 69", start="2026-10-08 17:50:00"),          # same place, older
+              ev("6", "อุบัติเหตุ ถนนลาดพร้าว", lat="bad"),                               # bad coords
+              ev("7", "อุบัติเหตุ ถนนราชพฤกษ์", start="2026-10-08 18:01:00"),
+              ev("8", "อุบัติเหตุ ถนนรามอินทรา", start="2026-10-08 17:40:00"),
+              ev("9", "อุบัติเหตุ ถนนพระราม 2", start="2026-10-08 17:30:00")]
+    acc = traffic.parse_accidents(events, now)
+    assert [a["id"] for a in acc] == ["lg1", "lg7", "lg8"], acc
+    assert acc[0]["place"] == "ถนนเพชรเกษม 69"
+    assert traffic.parse_accidents([], now) == []
+    acc = [{"id": "lg1", "place": "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338"}, {"id": "lg2", "place": "บางนา"}]
     roads = [{"road": "ratchada", "traffic_level": "slow", "road_name": "รัชดาฯ", "current_speed": 25}]
     assert signature(roads, acc[:1]) != signature(roads)
     msg = build_message(roads, traffic.datetime(2026, 10, 8, 8, 0), acc[:2])

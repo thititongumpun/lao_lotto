@@ -75,10 +75,11 @@ POINTS = [
     ]
 ]
 
-INCIDENT_URL = "https://api.tomtom.com/traffic/services/5/incidentDetails"
-# POINTS' bounding box padded ~3 km (≈1,600 km², API limit 10,000)
-BBOX = ",".join(f"{v:.3f}" for v in (min(p["lon"] for p in POINTS) - 0.03, min(p["lat"] for p in POINTS) - 0.03,
-                                     max(p["lon"] for p in POINTS) + 0.03, max(p["lat"] for p in POINTS) + 0.03))
+# Longdo Event: public, keyless, JS100/iTIC-fed. TomTom incidentDetails had ~0 Bangkok accidents.
+EVENT_URL = "https://event.longdo.com/feed/json"
+# POINTS' bounding box padded ~3 km: (min_lon, min_lat, max_lon, max_lat)
+BBOX = (min(p["lon"] for p in POINTS) - 0.03, min(p["lat"] for p in POINTS) - 0.03,
+        max(p["lon"] for p in POINTS) + 0.03, max(p["lat"] for p in POINTS) + 0.03)
 MAX_ACCIDENTS = 3
 
 LEVELS = ["heavy", "slow", "moderate", "free"]
@@ -148,40 +149,36 @@ def fetch_point(p: dict, key: str, collected_at: str) -> dict | None:
     return seg
 
 
-def parse_accidents(js: dict) -> list[dict]:
+def parse_accidents(events: list, now: datetime) -> list[dict]:
+    """Longdo events -> live accidents inside BBOX, newest first. start/stop are Bangkok local time."""
+    stamp = f"{now:%Y-%m-%d %H:%M:%S}"
     out, seen = [], set()
-    for inc in js.get("incidents") or []:
-        pr = inc.get("properties") or {}
-        if pr.get("iconCategory") != 1:  # 1 = Accident
+    for e in sorted(events or [], key=lambda e: e.get("start") or "", reverse=True):
+        if e.get("icon") != "accident" or not (e.get("start") or "") <= stamp <= (e.get("stop") or ""):
             continue
-        # TomTom names run long: "ถนนราชพฤกษ์-ถนนบรมราชชนนี 338 (ทางหลวงหมายเลข 338)" -> drop the "(...)"
-        place = re.sub(r"\s*\(.*?\)", "", pr.get("from") or pr.get("to") or "").strip()
+        try:
+            lat, lon = float(e["latitude"]), float(e["longitude"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (BBOX[0] <= lon <= BBOX[2] and BBOX[1] <= lat <= BBOX[3]):
+            continue
+        # "อุบัติเหตุ ถนนเพชรเกษม 69" -> "ถนนเพชรเกษม 69"
+        place = re.sub(r"^อุบัติเหตุ\s*", "", (e.get("title") or "").strip())
         if not place or place in seen:
             continue
         seen.add(place)
-        out.append({"id": str(pr.get("id") or place), "place": place})
+        out.append({"id": f"lg{e.get('eid')}", "place": place})
     return out[:MAX_ACCIDENTS]
 
 
-def fetch_accidents(key: str) -> list[dict]:
-    """Current accidents in BBOX. Additive: any failure but 403/429 -> [] so the flow report still posts."""
+def fetch_accidents(now: datetime) -> list[dict]:
+    """Additive: any failure -> [] so the flow report still posts."""
     try:
-        r = requests.get(INCIDENT_URL, params={
-            "key": key, "bbox": BBOX, "categoryFilter": "1", "timeValidityFilter": "present",
-            "language": "th-TH",
-            "fields": "{incidents{properties{id,iconCategory,from,to}}}"}, timeout=10)
-    except requests.RequestException as exc:
-        print(f"[TRAFFIC] incidents failed: {type(exc).__name__}")
-        return []
-    if r.status_code in (403, 429):
-        raise RuntimeError(f"tomtom {r.status_code}")
-    if r.status_code != 200:
-        print(f"[TRAFFIC] incidents failed: http {r.status_code}")
-        return []
-    try:
-        return parse_accidents(r.json())
-    except (ValueError, TypeError, AttributeError):
-        print("[TRAFFIC] incidents failed: bad payload")
+        r = requests.get(EVENT_URL, timeout=10)
+        r.raise_for_status()
+        return parse_accidents(r.json(), now)
+    except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+        print(f"[TRAFFIC] longdo events failed: {type(exc).__name__}")
         return []
 
 
@@ -299,7 +296,7 @@ def run(dry_run: bool = False) -> dict:
         now = datetime.now(BANGKOK)
         day = now.date()
         used = used_today(day)
-        if used + len(POINTS) + 1 > DAILY_CAP:  # +1 incidents call
+        if used + len(POINTS) > DAILY_CAP:
             return {"status": "skipped", "reason": "budget_exhausted", "used": used}
         last_sig, ago = last_post()
         if not dry_run and ago is not None and ago < MIN_GAP_MIN:
@@ -312,10 +309,9 @@ def run(dry_run: bool = False) -> dict:
                 s = fetch_point(p, key, collected_at)
                 if s:
                     segs.append(s)
-            calls += 1
-            accidents = fetch_accidents(key)
         finally:
             add_usage(day, calls)
+        accidents = fetch_accidents(now)
         if not segs:
             raise RuntimeError("no valid segments")
         roads = aggregate(segs)
