@@ -96,8 +96,12 @@ def run(days: int = 7) -> dict:
                 "shares=EXCLUDED.shares, updated_at=now()", rows)
             cur.executemany("INSERT INTO fb_page_earnings VALUES (%s,%s) "
                             "ON CONFLICT (day) DO UPDATE SET usd=EXCLUDED.usd", earnings)
+            # Graph only returns the last few days; the table has the longer history
+            cur.execute("SELECT day, usd FROM fb_page_earnings WHERE day > current_date - 30 ORDER BY day")
+            history = cur.fetchall()
         print(f"[STATS] {len(rows)} posts, {len(earnings)} earning days")
-        return {"status": "ok", "posts": len(rows), "earning_days": len(earnings), **earnings_summary(earnings)}
+        return {"status": "ok", "posts": len(rows), "earning_days": len(earnings), **earnings_summary(history),
+                "earnings": [[d.isoformat(), round(float(u), 2)] for d, u in history]}
     except Exception as exc:
         print(f"[STATS] error: {exc}")
         return {"status": "error", "error": str(exc)}

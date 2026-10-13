@@ -63,6 +63,8 @@ def end(job: str, run: str, result: dict) -> None:
     # scalars only, trimmed: results can carry long scripts and paths
     f = {k: (v[:200] if isinstance(v, str) else v) for k, v in result.items()
          if isinstance(v, (str, int, float, bool)) and k != "status"}
+    if isinstance(result.get("earnings"), list):  # stats: [[day, usd], ...] for the dashboard chart
+        f["earnings"] = result["earnings"][-30:]
     if status == "fail":
         f["reason"] = str(result.get("error") or result.get("message") or "error")[:200]
     emit(job, run, "job", status, f)

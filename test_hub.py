@@ -55,5 +55,5 @@ def test_earnings_summary_feeds_hub_end(monkeypatch):
     assert stats.earnings_summary([]) == {}
     sent = []
     monkeypatch.setattr(hub, "emit", lambda *a: sent.append(a))
-    hub.end("stats", "r", {"status": "ok", **out})
-    assert sent[0][4]["usd"] == 2.5
+    hub.end("stats", "r", {"status": "ok", **out, "earnings": [["2026-10-12", 2.5]]})
+    assert sent[0][4]["usd"] == 2.5 and sent[0][4]["earnings"] == [["2026-10-12", 2.5]]
