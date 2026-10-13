@@ -44,3 +44,16 @@ def test_emit_posts_to_hub(monkeypatch):
 def test_emit_noop_without_url(monkeypatch):
     monkeypatch.delenv("HUB_URL", raising=False)
     hub.emit("pipeline", "r1", "job", "start")  # must not raise or block
+
+
+def test_earnings_summary_feeds_hub_end(monkeypatch):
+    from datetime import date
+    import stats
+    rows = [(date(2026, 10, d), v) for d, v in [(3, 1), (12, 2.5), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 1)]]
+    out = stats.earnings_summary(rows)
+    assert out == {"usd_day": "2026-10-12", "usd": 2.5, "usd_7d": 8.5}  # oldest (Oct 3) dropped
+    assert stats.earnings_summary([]) == {}
+    sent = []
+    monkeypatch.setattr(hub, "emit", lambda *a: sent.append(a))
+    hub.end("stats", "r", {"status": "ok", **out})
+    assert sent[0][4]["usd"] == 2.5

@@ -74,6 +74,15 @@ def fetch_earnings(days: int) -> list[tuple]:
             for m in r.json().get("data") or [] for v in m["values"]]
 
 
+def earnings_summary(earnings: list[tuple]) -> dict:
+    """Latest day + 7-day total, for the warehouse dashboard (hub.end forwards scalar result fields)."""
+    if not earnings:
+        return {}
+    days = sorted(earnings)[-7:]
+    return {"usd_day": days[-1][0].isoformat(), "usd": float(days[-1][1]),
+            "usd_7d": round(sum(float(u) for _, u in days), 2)}
+
+
 def run(days: int = 7) -> dict:
     try:
         ensure_tables()
@@ -88,7 +97,7 @@ def run(days: int = 7) -> dict:
             cur.executemany("INSERT INTO fb_page_earnings VALUES (%s,%s) "
                             "ON CONFLICT (day) DO UPDATE SET usd=EXCLUDED.usd", earnings)
         print(f"[STATS] {len(rows)} posts, {len(earnings)} earning days")
-        return {"status": "ok", "posts": len(rows), "earning_days": len(earnings)}
+        return {"status": "ok", "posts": len(rows), "earning_days": len(earnings), **earnings_summary(earnings)}
     except Exception as exc:
         print(f"[STATS] error: {exc}")
         return {"status": "error", "error": str(exc)}
