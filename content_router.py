@@ -17,6 +17,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+import hub
 from pipeline import RESULT_SENTINEL
 
 router   = APIRouter(prefix="/content", tags=["content"])
@@ -85,6 +86,9 @@ async def _run_subprocess(module: str, *args: str) -> dict:
     imports and peak buffers never accumulate in the long-lived server process.
     Returns the last RESULT_SENTINEL payload, or an error dict if none arrived."""
     now = datetime.now().isoformat()
+    job = f"{module}:{args[1]}" if args[:1] == ("--kind",) and len(args) > 1 else module
+    run = hub.new_run()
+    hub.emit(job, run, "job", "start")
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", module, *args,
         cwd=str(Path(__file__).parent),
@@ -109,6 +113,7 @@ async def _run_subprocess(module: str, *args: str) -> dict:
             "error": f"{module} subprocess produced no result (exit {proc.returncode})",
             "ran_at": now,
         }
+    hub.end(job, run, result)
     return result
 
 

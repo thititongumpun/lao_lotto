@@ -5,6 +5,9 @@ services:
       - "8011:8000"
     environment:
       TZ: Asia/Bangkok
+      # Warehouse dashboard events; HUB_KEY in .env must match the hub's.
+      HUB_URL: http://warehouse-hub:8080/ingest
+      HUB_KEY: ${HUB_KEY:-}
       LOTTO_DB_URL: ${LOTTO_DB_URL}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID}

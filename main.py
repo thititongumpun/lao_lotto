@@ -25,6 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+import hub
 from content_router import register_jobs
 from content_router import router as content_router
 
@@ -272,7 +273,14 @@ def run_fetch_job(backfill: bool = False) -> dict:
 
 def scheduled_job() -> None:
     print(f"[SCHEDULER] Running fetch job at {datetime.now().isoformat()}")
-    result = run_fetch_job()
+    run = hub.new_run()
+    hub.emit("lotto_fetch", run, "job", "start")
+    try:
+        result = run_fetch_job()
+    except Exception as e:
+        hub.end("lotto_fetch", run, {"status": "error", "error": str(e)})
+        raise
+    hub.end("lotto_fetch", run, result)
     print(f"[SCHEDULER] Done: {result}")
 
 
