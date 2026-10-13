@@ -38,9 +38,14 @@ def _cleanup_pipeline_files(predict: dict, output_dir: str = "lottery_output") -
             os.remove(info)
             removed.append(info)
 
+    # Empty the dir but keep it: in Docker it is a bind mount, and removing a mount point fails (EBUSY).
     if os.path.isdir(output_dir):
-        shutil.rmtree(output_dir)
-        removed.append(output_dir)
+        for entry in os.scandir(output_dir):
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.remove(entry.path)
+            removed.append(entry.path)
 
     print(f"[CLEANUP] Removed {len(removed)} item(s): {[os.path.basename(p) for p in removed]}")
 
