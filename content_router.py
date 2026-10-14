@@ -253,9 +253,11 @@ def register_jobs(scheduler) -> None:
         id="horoscope_post",
         replace_existing=True,
     )
-    scheduler.add_job(  # read-only on Facebook, so not behind NEWS_POSTS_ENABLED
+    # read-only on Facebook, so not behind NEWS_POSTS_ENABLED. Every 6 h: Meta publishes a day's
+    # earnings 1-2 days after it closes (14:00 Bangkok), at no fixed hour, so a daily run showed it up to a day late
+    scheduler.add_job(
         _scheduled_stats,
-        CronTrigger(hour=3, minute=10, timezone="Asia/Bangkok"),
+        CronTrigger(hour="3-21/6", minute=10, timezone="Asia/Bangkok"),
         id="fb_stats",
         replace_existing=True,
     )
